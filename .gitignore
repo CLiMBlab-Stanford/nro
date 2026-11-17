@@ -56,6 +56,13 @@ __pycache__/
 /slurm-*.out
 /slurm-*.err
 /*.log
+/*.nii
+/*.nii.gz
+/*.tsv
+/*.txt
+/a001_*/
+__MACOSX/
+/.claude/
 
 # Environment secrets; keep example files available for version control
 .env

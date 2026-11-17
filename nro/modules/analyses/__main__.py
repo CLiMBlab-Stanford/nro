@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from nro.analysis.artifacts import Artifact, file_entities
+from nro.analysis.execution import publish_output, runner_command
 from nro.analysis.manifest import InputSpec
 from nro.analysis.planning import provenance_path
 from nro.analysis.resolve import (
@@ -104,20 +105,6 @@ def resolve_inputs(specification: dict, context=None) -> dict[str, Resolution]:
     return result
 
 
-def _runner_command(container: str | None, path: Path) -> list[str]:
-    runner = ["-m", "nro.analysis.runner", str(path)]
-    if container is None:
-        return [sys.executable, *runner]
-    from nro.site.configuration import CHECKOUT, settings
-
-    values = settings()[0]
-    command = [str(values["runtime"]), "exec", "--cleanenv"]
-    for bind in values.get("binds") or ():
-        command.extend(["--bind", str(bind)])
-    command.extend(["--env", f"PYTHONPATH={CHECKOUT}", container, "python", *runner])
-    return command
-
-
 def _code_root(specification: dict) -> Path:
     """Return the extracted study code, extracting the commit again if it was removed.
 
@@ -130,13 +117,6 @@ def _code_root(specification: dict) -> Path:
 
     study, _name = split_analysis_name(specification["analysis"])
     return StudySource.at(study, specification["commit"]).snapshot()
-
-
-def _publish(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staged = destination.with_name(f".{destination.name}.publishing")
-    shutil.copy2(source, staged)
-    os.replace(staged, destination)
 
 
 def run(specification: dict, *, context=None, work_dir: Path) -> None:
@@ -191,7 +171,7 @@ def run(specification: dict, *, context=None, work_dir: Path) -> None:
         log = work_dir / "log.txt"
         with log.open("w", encoding="utf-8") as stream:
             completed = subprocess.run(
-                _runner_command(specification["container"], runner_path),
+                runner_command(specification["container"], runner_path),
                 cwd=work_dir,
                 stdout=stream,
                 stderr=subprocess.STDOUT,
@@ -218,7 +198,7 @@ def run(specification: dict, *, context=None, work_dir: Path) -> None:
     published = []
     for slot, logical in specification["outputs"].items():
         target = destination(logical)
-        _publish(staging / Path(logical).name, target)
+        publish_output(staging / Path(logical).name, target)
         sidecar = provenance_path(target)
         atomic_write_text(
             sidecar,

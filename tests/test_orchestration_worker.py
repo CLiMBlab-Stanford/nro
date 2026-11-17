@@ -18,8 +18,7 @@ from nro.bin.status import main as status_main
 from nro.definitions.store import ConfigStore
 from nro.engine.io import write_public_json
 from nro.modules.contrasts.task_models import model_contract
-from nro.orchestration import completion, dependency_state
-from nro.orchestration import registry as registry_module
+from nro.orchestration import completion, dependency_state, slurm_jobs
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import WorkItemSpec
@@ -37,6 +36,7 @@ from nro.orchestration.registry_work_items import work_item_relative_directory
 from nro.orchestration.scheduler_client import SchedulerError
 from nro.orchestration.scheduler_maintenance import refresh_scheduler_state
 from nro.orchestration.worker import Worker, _looks_like_oom, _outputs
+from nro.site.paths import registry_path
 
 
 def test_cuda_memory_failure_does_not_request_more_host_memory(tmp_path: Path) -> None:
@@ -845,7 +845,7 @@ def test_central_registry_shares_concurrency_without_cross_project_cancellation(
     )
 
     assert alpha_registry.paths.database == beta_registry.paths.database
-    assert alpha_registry.paths.control == tmp_path / ".nro"
+    assert alpha_registry.paths.control == registry_path()
     assert discover_registry_projects(bids) == ["alpha", "beta"]
     rows = {row["project"]: row for row in alpha_registry.work_item_rows()}
     assert set(rows) == {"alpha", "beta"}
@@ -2085,8 +2085,8 @@ def test_slurm_terminal_distinguishes_absence_from_query_failure(
     stderr,
     expected,
 ):
-    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/squeue")
-    monkeypatch.setattr(RegistryLock, "_slurm_accounting_terminal", lambda _job_id: None)
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.shutil.which", lambda name: "/bin/squeue")
+    monkeypatch.setattr(slurm_jobs, "accounting_terminal", lambda _job_id: None)
 
     def query(command, **kwargs):
         assert command == ["squeue", "--noheader", "--jobs", "123", "--format", "%T"]
@@ -2095,22 +2095,22 @@ def test_slurm_terminal_distinguishes_absence_from_query_failure(
         assert kwargs["check"] is False
         return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
-    monkeypatch.setattr("nro.orchestration.registry.subprocess.run", query)
-    assert RegistryLock._slurm_terminal("123") is expected
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.subprocess.run", query)
+    assert slurm_jobs.job_terminal("123") is expected
 
 
 @pytest.mark.parametrize("error", [OSError("unavailable"), subprocess.TimeoutExpired("squeue", 15)])
 def test_slurm_terminal_execution_errors_remain_unknown(monkeypatch, error):
-    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/squeue")
-    monkeypatch.setattr(RegistryLock, "_slurm_accounting_terminal", lambda _job_id: None)
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.shutil.which", lambda name: "/bin/squeue")
+    monkeypatch.setattr(slurm_jobs, "accounting_terminal", lambda _job_id: None)
 
     def query(*args, **kwargs):
         raise error
 
-    monkeypatch.setattr("nro.orchestration.registry.subprocess.run", query)
-    assert RegistryLock._slurm_terminal("123") is None
-    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: None)
-    assert RegistryLock._slurm_terminal("123") is None
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.subprocess.run", query)
+    assert slurm_jobs.job_terminal("123") is None
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.shutil.which", lambda name: None)
+    assert slurm_jobs.job_terminal("123") is None
 
 
 @pytest.mark.parametrize(
@@ -2127,7 +2127,7 @@ def test_slurm_terminal_execution_errors_remain_unknown(monkeypatch, error):
     ],
 )
 def test_slurm_accounting_provides_conclusive_fallback(monkeypatch, state, expected):
-    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/sacct")
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.shutil.which", lambda name: "/bin/sacct")
 
     def query(command, **kwargs):
         assert command == [
@@ -2143,8 +2143,8 @@ def test_slurm_accounting_provides_conclusive_fallback(monkeypatch, state, expec
         assert kwargs["env"]["LC_ALL"] == "C"
         return subprocess.CompletedProcess(command, 0, f"123|{state}\n123.batch|FAILED\n", "")
 
-    monkeypatch.setattr("nro.orchestration.registry.subprocess.run", query)
-    assert RegistryLock._slurm_accounting_terminal("123") is expected
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.subprocess.run", query)
+    assert slurm_jobs.accounting_terminal("123") is expected
 
 
 def test_observational_connections_share_the_cross_host_lock(tmp_path: Path) -> None:
@@ -2280,14 +2280,14 @@ def test_reconciliation_releases_only_confirmed_expired_worker_slots(
     registry.register_worker("live", resource_class="large", slurm_job_id="3")
     registry.mark_submission_running("3")
     assert registry.reserve_worker_submissions(request_id=request, resource_class="large") == []
-    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/squeue")
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.shutil.which", lambda name: "/bin/squeue")
 
     def query(command, **kwargs):
         if command[command.index("--jobs") + 1] == "3":
             return subprocess.CompletedProcess(command, 0, "RUNNING\n", "")
         return subprocess.CompletedProcess(command, 1, "", diagnostic)
 
-    monkeypatch.setattr("nro.orchestration.registry.subprocess.run", query)
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.subprocess.run", query)
     assert registry.reconcile_scheduler_submissions() == replacements
     assert registry.reconcile_scheduler_submissions() == 0
     reserved = registry.reserve_worker_submissions(request_id=request, resource_class="large")
@@ -2803,7 +2803,7 @@ def test_status_update_requeues_an_existing_slurm_timeout(tmp_path: Path, monkey
         error_type="CalledProcessError",
         error_message="Derivative command exited with status -15: see work-item.log",
     )
-    monkeypatch.setattr(RegistryLock, "_slurm_timed_out", lambda job_id: job_id == "123")
+    monkeypatch.setattr(slurm_jobs, "timed_out", lambda job_id: job_id == "123")
 
     assert registry.reconcile_attempt_timeouts() == 1
     assert registry.reconcile_attempt_timeouts() == 0
@@ -2891,9 +2891,9 @@ def test_orphan_recovery_requeues_work_from_expired_allocation(tmp_path: Path, m
     assert registry.claim_ready_work_item("expired", ("large",)) is not None
     with registry.connection(write=True) as db:
         db.execute("UPDATE workers SET pid=999999999,lease_expires_at=0 WHERE id='expired'")
-    monkeypatch.setattr(RegistryLock, "_slurm_terminal", lambda _job_id: True)
-    monkeypatch.setattr(RegistryLock, "_slurm_out_of_memory", lambda _job_id: False)
-    monkeypatch.setattr(RegistryLock, "_slurm_timed_out", lambda job_id: job_id == "123")
+    monkeypatch.setattr(slurm_jobs, "job_terminal", lambda _job_id: True)
+    monkeypatch.setattr(slurm_jobs, "out_of_memory", lambda _job_id: False)
+    monkeypatch.setattr(slurm_jobs, "timed_out", lambda job_id: job_id == "123")
 
     assert registry.recover_orphaned_attempts() == 1
 
@@ -2939,14 +2939,14 @@ def test_orphan_recovery_detects_a_requeued_allocation(
         )
         db.execute("UPDATE attempts SET state='running' WHERE worker_id='preempted'")
     # Slurm requeued the preempted job under the same ID, so it is still alive.
-    monkeypatch.setattr(RegistryLock, "_slurm_terminal", lambda _job_id: False)
+    monkeypatch.setattr(slurm_jobs, "job_terminal", lambda _job_id: False)
     monkeypatch.setattr(
-        RegistryLock,
-        "_slurm_run_replaced",
+        slurm_jobs,
+        "run_replaced",
         lambda job_id, *, hostname, registered_at: requeued,
     )
-    monkeypatch.setattr(RegistryLock, "_slurm_out_of_memory", lambda _job_id: False)
-    monkeypatch.setattr(RegistryLock, "_slurm_timed_out", lambda _job_id: False)
+    monkeypatch.setattr(slurm_jobs, "out_of_memory", lambda _job_id: False)
+    monkeypatch.setattr(slurm_jobs, "timed_out", lambda _job_id: False)
 
     recovered = registry.recover_orphaned_attempts()
 
@@ -2974,15 +2974,15 @@ def test_orphan_recovery_detects_a_requeued_allocation(
 def test_requeued_slurm_run_is_recognized(monkeypatch, line, expected) -> None:
     monkeypatch.setenv("TZ", "UTC")
     time.tzset()
-    monkeypatch.setattr(registry_module.shutil, "which", lambda _name: "/usr/bin/squeue")
+    monkeypatch.setattr(slurm_jobs.shutil, "which", lambda _name: "/usr/bin/squeue")
     monkeypatch.setattr(
-        registry_module.subprocess,
+        slurm_jobs.subprocess,
         "run",
         lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=line + "\n", stderr=""),
     )
     try:
         assert (
-            RegistryLock._slurm_run_replaced(
+            slurm_jobs.run_replaced(
                 "123",
                 hostname="node1330.inband",
                 registered_at="2026-11-12T00:00:00+00:00",
@@ -2998,7 +2998,7 @@ def test_requeued_slurm_run_is_recognized(monkeypatch, line, expected) -> None:
 def test_installation_drain_releases_externally_killed_pool(
     tmp_path: Path, monkeypatch, allocation_ended
 ) -> None:
-    from nro.orchestration import scheduler_operations, worker_control
+    from nro.orchestration import scheduler_operations
 
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
@@ -3051,10 +3051,10 @@ def test_installation_drain_releases_externally_killed_pool(
         lambda _control: SimpleNamespace(read=lambda: SimpleNamespace(topology=topology)),
     )
     monkeypatch.setattr(scheduler_operations, "_last_installation_reconciliation", {})
-    monkeypatch.setattr(RegistryLock, "_slurm_terminal", lambda _job_id: allocation_ended)
-    monkeypatch.setattr(RegistryLock, "_slurm_out_of_memory", lambda _job_id: False)
-    monkeypatch.setattr(RegistryLock, "_slurm_timed_out", lambda _job_id: False)
-    monkeypatch.setattr(worker_control, "_slurm_job_terminal", lambda _job_id: allocation_ended)
+    monkeypatch.setattr(slurm_jobs, "job_terminal", lambda _job_id: allocation_ended)
+    monkeypatch.setattr(slurm_jobs, "out_of_memory", lambda _job_id: False)
+    monkeypatch.setattr(slurm_jobs, "timed_out", lambda _job_id: False)
+    monkeypatch.setattr(slurm_jobs, "job_terminal", lambda _job_id: allocation_ended)
 
     progress = scheduler_operations.installation_progress(registry, checkout=checkout)
 
@@ -3462,11 +3462,11 @@ def test_successor_reconciles_recovered_oom_at_memory_ceiling(tmp_path: Path, mo
     with registry.connection(write=True) as db:
         db.execute("UPDATE workers SET pid=999999999, lease_expires_at=0 WHERE id='oom-worker'")
     monkeypatch.setattr(
-        "nro.orchestration.registry.RegistryLock._slurm_out_of_memory",
+        "nro.orchestration.slurm_jobs.out_of_memory",
         staticmethod(lambda _job: True),
     )
     monkeypatch.setattr(
-        "nro.orchestration.registry.RegistryLock._slurm_terminal",
+        "nro.orchestration.slurm_jobs.job_terminal",
         staticmethod(lambda _job: True),
     )
     refresh_scheduler_state(registry)
@@ -3523,11 +3523,11 @@ def test_recovered_gpu_step_oom_does_not_inflate_parent_memory(tmp_path: Path, m
     with registry.connection(write=True) as db:
         db.execute("UPDATE workers SET pid=999999999, lease_expires_at=0 WHERE id='gpu-oom'")
     monkeypatch.setattr(
-        "nro.orchestration.registry.RegistryLock._slurm_out_of_memory",
+        "nro.orchestration.slurm_jobs.out_of_memory",
         staticmethod(lambda _job: True),
     )
     monkeypatch.setattr(
-        "nro.orchestration.registry.RegistryLock._slurm_terminal",
+        "nro.orchestration.slurm_jobs.job_terminal",
         staticmethod(lambda _job: True),
     )
 

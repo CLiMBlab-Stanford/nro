@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from nro.engine.io import read_public_json
 from nro.engine.paths import anatomical_manifest_path
 from nro.engine.templates import find_mni_gray_matter_mask
-from nro.site.paths import BIDS_PATH
+from nro.site.paths import bids_path
 
 if TYPE_CHECKING:
     from nro.orchestration.execution_context import ExecutionContext
@@ -29,7 +29,7 @@ def infer_gray_matter_mask(
         path = Path(configured_mask).expanduser()
         if not path.is_absolute():
             path = (
-                Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
+                Path(bids_path() if execution_context is None else execution_context.paths.bids)
                 / project
                 / path
             )

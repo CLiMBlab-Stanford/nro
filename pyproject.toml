@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nro"
-version = "0.46.2"
+version = "0.47.0"
 description = "BIDS fMRI derivative processing and orchestration"
 requires-python = ">=3.12"
 dependencies = [
@@ -60,7 +60,7 @@ url = "https://download.pytorch.org/whl/cu118"
 explicit = true
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
+dev = ["pytest>=8,<10", "pytest-xdist>=3.6,<4", "ruff>=0.12,<1"]
 
 [project.scripts]
 nro = "nro.cli:main"

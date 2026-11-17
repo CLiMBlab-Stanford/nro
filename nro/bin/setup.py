@@ -7,8 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from nro.site import configuration as site_config
 from nro.site.bootstrap import cancel_setup
-from nro.site.configuration import CHECKOUT, installation_record, settings, site_file
+from nro.site.configuration import installation_record, settings, site_file
 from nro.site.dependencies import (
     QUNEX_TERMS,
     check_installation,
@@ -32,7 +33,7 @@ def _main(argv=None, *, prog="nro setup"):
     values = list(sys.argv[1:] if argv is None else argv)
     if "--resources-only" not in values:
         result = subprocess.run(
-            [sys.executable, str(CHECKOUT / "install"), *values],
+            [sys.executable, str(site_config.CHECKOUT / "install"), *values],
             env={**os.environ, "NRO_SETUP_CHILD": "1"},
         )
         raise SystemExit(result.returncode)
@@ -87,7 +88,7 @@ def _main(argv=None, *, prog="nro setup"):
         from nro.site.bootstrap import check_installation_barrier, check_workers
 
         if args.prepared_maintenance:
-            check_installation_barrier(site_file(), CHECKOUT)
+            check_installation_barrier(site_file(), site_config.CHECKOUT)
         else:
             check_workers(site_file())
         path = site_file()

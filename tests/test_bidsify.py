@@ -298,7 +298,7 @@ def test_unknown_identity_cannot_organize_or_publish(ingestion, field):
     registry, store, row = ingestion
     row[field] = None
     row["stage"] = "convert"
-    result = convert(row, registry)
+    result = convert(row)
     assert result["state"] == "needs_input"
     assert any(f"BIDS {field} label" in issue for issue in result["issues"])
     for operation in (approval_snapshot, publish):
@@ -649,7 +649,7 @@ def test_real_dcm2bids_organizes_sanitized_nifti(ingestion, monkeypatch, pending
 
         # The request keeps prepared images while its participant is unknown.
         before = inventory(helper)
-        assert convert(row, registry)["state"] == "needs_input"
+        assert convert(row)["state"] == "needs_input"
         row["state"] = "needs_input"
         row = save_decision(store, row)
         answers = iter(["t20", "", "none", "none"])
@@ -657,7 +657,7 @@ def test_real_dcm2bids_organizes_sanitized_nifti(ingestion, monkeypatch, pending
         with store.review_session(row["id"]) as token:
             row = wizard(store, row, review_token=token)
         assert inventory(helper) == before
-    result = convert(row, registry)
+    result = convert(row)
     assert result["state"] == "awaiting_approval"
     assert any(name.endswith("_bold.nii.gz") for name in result["output_hashes"])
     assert not (registry.paths.bids_root / "demo").exists()

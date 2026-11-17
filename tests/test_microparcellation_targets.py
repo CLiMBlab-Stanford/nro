@@ -42,7 +42,7 @@ def test_subject_volume_space_is_t1w_not_acpc() -> None:
 def test_expected_target_is_derived_from_source_bids_and_requested_entities(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setattr("nro.engine.paths.BIDS_PATH", str(tmp_path / "bids"))
+    monkeypatch.setattr("nro.engine.paths.bids_path", lambda: tmp_path / "bids")
     runs = (
         BidsRun(
             participant="01",

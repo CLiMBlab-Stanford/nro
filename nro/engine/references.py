@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -113,7 +114,13 @@ def resolve_bids_uri(value: str, roots: ReferenceRoots) -> Path:
         root = roots.project
     else:
         raise ValueError(f"Unknown BIDS dataset link {dataset!r}")
-    path = root.joinpath(*relative.parts)
+    return _join_within(root, relative.parts)
+
+
+@functools.lru_cache(maxsize=65536)
+def _join_within(root: Path, parts: tuple[str, ...]) -> Path:
+    """Join validated relative parts below a root, rejecting an escape."""
+    path = root.joinpath(*parts)
     path.relative_to(root)
     return path
 
@@ -146,7 +153,13 @@ def resolve_site_uri(value: str, roots: ReferenceRoots) -> Path:
     member = match.group("path")
     relative = PurePosixPath() if member == "." else _relative(member, label="site URI")
     root = roots.site[name]
-    path = root.joinpath(*relative.parts)
+    return _join_within(root, relative.parts)
+
+
+@functools.lru_cache(maxsize=65536)
+def _join_within(root: Path, parts: tuple[str, ...]) -> Path:
+    """Join validated relative parts below a root, rejecting an escape."""
+    path = root.joinpath(*parts)
     path.relative_to(root)
     return path
 
@@ -188,7 +201,8 @@ def absolute_path_values(value: Any) -> tuple[str, ...]:
         elif isinstance(item, (list, tuple)):
             for member in item:
                 visit(member)
-        elif isinstance(item, str) and Path(item).is_absolute() and "\n" not in item:
+        # On POSIX, Path(item).is_absolute() is exactly a leading slash.
+        elif isinstance(item, str) and item.startswith("/") and "\n" not in item:
             found.append(item)
 
     visit(value)

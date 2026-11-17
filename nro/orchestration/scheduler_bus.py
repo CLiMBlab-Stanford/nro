@@ -18,7 +18,9 @@ from typing import Any
 
 from nro.definitions.store import fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text, read_json
+from nro.orchestration import slurm_jobs
 from nro.orchestration.control_paths import ControlPaths
+from nro.orchestration.local_processes import process_state
 from nro.orchestration.recovery_lock import RecoveryLock
 
 PROTOCOL = 1
@@ -296,13 +298,6 @@ def clear_startup_progress(control: Path, token: str) -> None:
     startup_progress_path(control, token).unlink(missing_ok=True)
 
 
-def _slurm_terminal(job_id: str) -> bool | None:
-    """Return a positive terminal-state result without guessing on scheduler failure."""
-    from nro.orchestration.registry import RegistryLock
-
-    return RegistryLock._slurm_terminal(job_id)
-
-
 def _launch_abandoned(record: dict[str, Any] | None) -> bool:
     if not record:
         return False
@@ -318,13 +313,10 @@ def _launch_abandoned(record: dict[str, Any] | None) -> bool:
                 except (KeyError, TypeError, ValueError):
                     return False
             try:
-                os.kill(int(job_id.removeprefix("local-")), 0)
-            except ProcessLookupError:
-                return True
-            except (PermissionError, OSError, ValueError):
+                return process_state(int(job_id.removeprefix("local-"))) == "absent"
+            except ValueError:
                 return False
-            return False
-        return _slurm_terminal(job_id) is True
+        return slurm_jobs.job_terminal(job_id) is True
     try:
         created = datetime.fromisoformat(str(record["created_at"]))
         return (datetime.now(timezone.utc) - created).total_seconds() > STARTING_GRACE_SECONDS
@@ -759,7 +751,7 @@ def read_branch_snapshot(control: Path, checkout: Path) -> dict[str, Any]:
 def publish_shutdown(control: Path, *, token: str, generation: int) -> None:
     """Prevent workers from replacing a controller stopped intentionally."""
     atomic_write_json(
-        ControlPaths(control).service / "shutdown.json",
+        ControlPaths(control).service_shutdown,
         {
             "protocol": PROTOCOL,
             "token": token,
@@ -774,7 +766,7 @@ def publish_shutdown(control: Path, *, token: str, generation: int) -> None:
 
 def shutdown_pending(control: Path) -> bool:
     """Return whether an intentional controller shutdown remains in force."""
-    path = ControlPaths(control).service / "shutdown.json"
+    path = ControlPaths(control).service_shutdown
     try:
         return read_json(path).get("protocol") == PROTOCOL
     except (FileNotFoundError, ValueError, OSError):
@@ -783,7 +775,7 @@ def shutdown_pending(control: Path) -> bool:
 
 def clear_shutdown(control: Path) -> None:
     """Allow an explicit user command to start orchestration again."""
-    (ControlPaths(control).service / "shutdown.json").unlink(missing_ok=True)
+    (ControlPaths(control).service_shutdown).unlink(missing_ok=True)
 
 
 def collect_transport_garbage(control: Path, *, age_seconds: float = 86400.0) -> None:

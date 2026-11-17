@@ -14,6 +14,7 @@ from typing import Iterable
 
 from nro.orchestration import dependency_state
 from nro.orchestration.artifact_records import inventory, is_control_artifact, read_json_mapping
+from nro.orchestration.attempt_files import AttemptFiles
 from nro.orchestration.completion_records import completion_record
 from nro.orchestration.ownership import write_work_item_ownership
 from nro.orchestration.registry import Registry, utcnow
@@ -60,7 +61,7 @@ def _private_step_artifacts(
         row = db.execute("SELECT log_path FROM attempts WHERE id=?", (attempt_id,)).fetchone()
     if row is None or not row["log_path"]:
         return []
-    ledger = Path(str(row["log_path"])).parent / "current-steps.json"
+    ledger = AttemptFiles.for_log(Path(str(row["log_path"]))).current_steps
     value = read_json_mapping(ledger)
     if value is None:
         return []

@@ -17,6 +17,7 @@ from nro.engine.cli import (
 )
 from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.modules import MODULE_NAMES
+from nro.orchestration.attempt_files import AttemptFiles
 
 _RESET = "\x1b[0m"
 _BOLD = "\x1b[1m"
@@ -258,7 +259,7 @@ def _failure_detail(row: dict, *, project: str) -> dict:
         if row.get("status") == "Corrupt"
         else row.get("error_message") or ""
     )
-    ledger = log.parent / "current-steps.json" if log else None
+    ledger = AttemptFiles.for_log(log).current_steps if log else None
     if ledger is not None:
         try:
             records = json.loads(ledger.read_text(encoding="utf-8"))

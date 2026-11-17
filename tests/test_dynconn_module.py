@@ -393,3 +393,12 @@ def test_system_seed_is_recorded_and_replays_the_fit() -> None:
         pseudo_timeseries_block(replay, 0, 5),
         atol=1e-6,
     )
+
+
+def test_entry_point_rejects_execution_context_for_another_project() -> None:
+    from types import SimpleNamespace
+
+    from nro.modules.dynconn.__main__ import main
+
+    with pytest.raises(ValueError, match="project differs"):
+        main(["-p", "01", "-P", "demo"], execution_context=SimpleNamespace(project="other"))

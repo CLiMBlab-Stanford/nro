@@ -9,7 +9,6 @@ import yaml
 
 from nro.definitions.store import ConfigStore
 from nro.orchestration.registry import Registry
-from nro.site.paths import BIDS_PATH
 
 CONFIGURATION_FINGERPRINT_ENV = "NRO_CONFIGURATION_FINGERPRINT"
 
@@ -47,7 +46,7 @@ def resolve_workflow_runtime(
     project: str,
     workflow_id: str,
     configuration_class: str,
-    bids_root: str | Path = BIDS_PATH,
+    bids_root: str | Path | None = None,
 ) -> Path:
     """Register a workflow and return one class's immutable runtime config."""
     workflow = ConfigStore().resolve(workflow_id)
@@ -61,7 +60,7 @@ def select_runtime_config(
     project: str,
     workflow_id: str,
     configuration_class: str,
-    bids_root: str | Path = BIDS_PATH,
+    bids_root: str | Path | None = None,
     execution_context=None,
 ) -> Path:
     """Select a public workflow, or validate an orchestrator-owned snapshot."""

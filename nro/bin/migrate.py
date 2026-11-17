@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nro.cli import package_version
-from nro.engine.cli import page_text
+from nro.engine.cli import confirm, page_text
 from nro.site.configuration import settings
+from nro.versioning import application_version
 
 
 def _parser(prog: str) -> argparse.ArgumentParser:
@@ -50,14 +50,6 @@ def _render(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _confirm() -> bool:
-    try:
-        response = input("Proceed with project migration? [y/N] ")
-    except (EOFError, KeyboardInterrupt):
-        return False
-    return response.strip().lower() in {"y", "yes"}
-
-
 def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
     """Preview and optionally apply a selected representation migration."""
     args = _parser(prog).parse_args(argv)
@@ -74,7 +66,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
         operation="dataset_migration",
         projects=projects,
         execute=False,
-        version=package_version(),
+        version=application_version(),
     )
     rendered = _render(preview)
     if args.force:
@@ -108,7 +100,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
             preparation=preview["preparation"],
         )
         return
-    if not args.force and not _confirm():
+    if not args.force and not confirm("Proceed with project migration?"):
         maintenance(
             Path(values["registry"]),
             bids,
@@ -126,7 +118,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
         operation="dataset_migration",
         projects=projects,
         execute=True,
-        version=package_version(),
+        version=application_version(),
         preparation=preview["preparation"],
     )
     if report["errors"]:

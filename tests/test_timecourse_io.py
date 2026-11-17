@@ -43,7 +43,7 @@ def test_temporal_mean_chunk_size_does_not_amplify_cancellation(tmp_path, chunk)
     source, output = tmp_path / "bold.nii.gz", tmp_path / "mean.nii.gz"
     nib.save(nib.Nifti1Image(data, np.eye(4)), source)
     step = func_steps._create_temporal_mean_step(
-        in_4d=source, out_3d=output, env={}, force=False, chunk_vols=chunk
+        in_4d=source, out_3d=output, force=False, chunk_vols=chunk
     )
     step.action()
     np.testing.assert_array_equal(
@@ -96,7 +96,6 @@ def test_temporal_mean_materializes_proxy_once_before_block_reduction(
         func_steps._create_temporal_mean_step(
             in_4d=tmp_path / "input.nii.gz",
             out_3d=output,
-            env={},
             force=False,
             chunk_vols=2,
         )

@@ -7,6 +7,14 @@ immutable `StagePlan`: an ordered tuple of steps plus typed downstream products.
 Only the module entry point adds those declarations to its runner, and it builds the
 complete DAG before freshness decisions or execution begin.
 
+The anatomical and functional builders split this work into three parts:
+`layout.py` names the fixed paths, `graph_policy.py` resolves inputs and
+choices, and `construction.py` holds the stage planners that `build_module`
+calls in order. Golden files under `tests/fixtures/graphs/` record each graph's
+step contracts for several option combinations. A refactor must leave them
+unchanged. Regenerate them with `UPDATE_GRAPH_GOLDENS=1` only in a change that
+intends to alter a graph, and review the difference.
+
 Use shared readers, writers, image helpers, and contract utilities from `nro.engine`.
 Do not read scheduler tables, branch topology, or worker state from a scientific
 module. Dependencies arrive through compiled paths and `ExecutionContext` bindings.

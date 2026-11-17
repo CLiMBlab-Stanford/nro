@@ -317,36 +317,36 @@ def feature_time_series(melmix: Path, mc: Path) -> np.ndarray:
 
 
 def feature_frequency(mel_ftmix: Path, tr: float) -> np.ndarray:
-    """Compute ICA-AROMA's normalized high-frequency-content feature."""
-    fs = 1.0 / tr
-    nyquist = fs / 2.0
-    ft = np.loadtxt(mel_ftmix)
-    if ft.ndim == 1:
-        ft = ft[:, np.newaxis]
-    else:
-        ft = np.atleast_2d(ft)
+    """Compute ICA-AROMA's normalized high-frequency-content feature.
 
-    f = nyquist * (np.arange(1, ft.shape[0] + 1)) / ft.shape[0]
-    fincl = np.flatnonzero(f > 0.01)
-    if fincl.size == 0:
+    For each component, return the normalized frequency below which half of the
+    spectral power above 0.01 Hz lies.
+    """
+    sampling_rate_hz = 1.0 / tr
+    nyquist_hz = sampling_rate_hz / 2.0
+    power = np.loadtxt(mel_ftmix)
+    if power.ndim == 1:
+        power = power[:, np.newaxis]
+    else:
+        power = np.atleast_2d(power)
+
+    frequencies_hz = nyquist_hz * (np.arange(1, power.shape[0] + 1)) / power.shape[0]
+    retained = np.flatnonzero(frequencies_hz > 0.01)
+    if retained.size == 0:
         raise RuntimeError(
             f"MELODIC frequency spectrum contains no frequencies above 0.01 Hz: {mel_ftmix}"
         )
-    ft = ft[fincl, :]
-    f = f[fincl]
+    power = power[retained, :]
+    frequencies_hz = frequencies_hz[retained]
 
-    f_norm = (f - 0.01) / (nyquist - 0.01)
-    fcumsum_fract = np.cumsum(ft, axis=0) / np.sum(ft, axis=0)
-    idx_cutoff = np.argmin(np.abs(fcumsum_fract - 0.5), axis=0)
-    return f_norm[idx_cutoff]
+    normalized_frequencies = (frequencies_hz - 0.01) / (nyquist_hz - 0.01)
+    cumulative_power_fraction = np.cumsum(power, axis=0) / np.sum(power, axis=0)
+    half_power_index = np.argmin(np.abs(cumulative_power_fraction - 0.5), axis=0)
+    return normalized_frequencies[half_power_index]
 
 
 def feature_spatial(
     *,
-    run_cmd: RunCommand,
-    run_out: RunOutCommand,
-    fsl_cmds: Mapping[str, str],
-    temp_dir: Path,
     mel_ic: Path,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute ICA-AROMA edge and CSF spatial-fraction features."""
@@ -603,10 +603,6 @@ def run_ica_aroma_workflow(
     )
 
     edge_fract, csf_fract = feature_spatial(
-        run_cmd=run_cmd,
-        run_out=run_out,
-        fsl_cmds=fsl_cmds,
-        temp_dir=out_dir,
         mel_ic=mel_ic_mni,
     )
     melmix = out_dir / "melodic.ica" / "melodic_mix"

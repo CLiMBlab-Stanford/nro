@@ -1,6 +1,5 @@
 """Publish verified development artifacts under an accepting ancestor's authority."""
 
-import hashlib
 import json
 import os
 import shutil
@@ -8,7 +7,7 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 
-from nro.engine.io import atomic_write_json
+from nro.engine.io import atomic_write_json, file_sha256
 from nro.orchestration.artifact_records import inventory
 from nro.orchestration.artifact_resolution import scientific_contract_fingerprint
 from nro.orchestration.branch_purge import token
@@ -20,7 +19,7 @@ from nro.orchestration.manifests import (
     _public_derivative_completion,
     assess_registry,
 )
-from nro.orchestration.registry import utcnow
+from nro.orchestration.registry import require_request_owner, utcnow
 
 
 def _rows(db):
@@ -64,12 +63,8 @@ def preview(
     assess_registry(registry, compiled=True)
     with registry.connection() as db:
         ids = set()
+        require_request_owner(db, requests, owner, purpose="Promotion")
         for request in requests:
-            record = db.execute(
-                "SELECT registry_id FROM request_owners WHERE request_id=?", (request,)
-            ).fetchone()
-            if record is None or record[0] != owner:
-                raise ValueError("Promotion request belongs to another branch")
             ids.update(
                 row[0]
                 for row in db.execute(
@@ -124,7 +119,7 @@ def preview(
             metadata = execution.get(work_item_id)
             if metadata is None or metadata["registry_id"] != owner:
                 raise ValueError("Promotion cannot replace inherited outputs")
-            completion, reason = _public_derivative_completion(producer, registry, compiled=True)
+            completion, reason = _public_derivative_completion(producer, compiled=True)
             if completion is None:
                 raise ValueError(reason)
             source_root, destination = Path(producer["output_root"]), Path(row["output_root"])
@@ -147,11 +142,6 @@ def preview(
     return dict(
         source=source, target=target, release=release, pr=pr.strip(), requests=requests, items=items
     )
-
-
-def _digest(path):
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _relocate(path: Path, mappings: list[tuple[str, str]], forbidden: str) -> None:
@@ -361,7 +351,7 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                     raise ValueError("Promotion source contains an external symlink")
                 copied.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(original, copied)
-                if _digest(original) != _digest(copied):
+                if file_sha256(original) != file_sha256(copied):
                     raise ValueError("Source changed during promotion copy")
                 from nro.orchestration.branches import BranchPaths
 
@@ -387,7 +377,7 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                     continue
                 if any(Path(mapped).is_relative_to(Path(other["root"])) for other in copies):
                     continue
-                if not Path(mapped).is_file() or _digest(original) != _digest(Path(mapped)):
+                if not Path(mapped).is_file() or file_sha256(original) != file_sha256(Path(mapped)):
                     raise ValueError(
                         "An existing target input differs from the source input; promote an equivalent dependency closure"
                     )

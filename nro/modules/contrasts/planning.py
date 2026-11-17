@@ -1,12 +1,10 @@
 """Demand-driven work-item construction for participant analysis models."""
 
 import json
-import sys
 from pathlib import Path
 
 from nro.engine.bids import matches_filter, resolve_bids_table
 from nro.orchestration.contracts import WorkItemSpec
-from nro.orchestration.planning_context import work_item_key
 
 from .paths import artifact_root, completion_path, work_item_prefix
 from .stimuli import StimulusAnnotationError, annotation_inputs
@@ -133,42 +131,11 @@ def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
                 "smoothing": str(smoothing),
             }
             result.append(
-                WorkItemSpec.create(
-                    key=work_item_key(
-                        context.project,
-                        descriptor.name,
-                        context.registered.lineage_fingerprints["contrasts"],
-                        context.participant,
-                        entities,
-                    ),
-                    module=descriptor.name,
-                    project=context.project,
-                    participant=context.participant,
+                context.target_work_item(
+                    descriptor,
                     entities=entities,
-                    scope=descriptor.scope,
-                    module_lineage_id=context.registered.lineages["contrasts"],
-                    config_fingerprint=context.workflow.configuration(
-                        "contrasts"
-                    ).scientific_fingerprint,
-                    directory_label=directory,
-                    runtime_config=context.runtime_config("contrasts"),
-                    command=(
-                        sys.executable,
-                        "-m",
-                        descriptor.execution_module,
-                        "-p",
-                        context.participant,
-                        "-P",
-                        context.project,
-                        "--model",
-                        model_id,
-                        "--model-definition",
-                        json.dumps(source, sort_keys=True),
-                        "-s",
-                        space,
-                        "-S",
-                        str(smoothing),
-                    ),
+                    space=space,
+                    smoothing=smoothing,
                     dependencies=tuple(
                         dict.fromkeys(
                             [
@@ -182,12 +149,14 @@ def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
                     ),
                     output_root=root,
                     output_prefix=prefix,
-                    output_format=descriptor.output_format,
-                    resource_class=descriptor.resource_class,
-                    memory_gb=context.memory_gb,
-                    max_memory_gb=context.max_memory_gb,
                     expected_outputs=(completion_path(root, prefix),),
-                    processing=context.processing_contract(descriptor, task_model=source),
+                    extra_arguments=(
+                        "--model",
+                        model_id,
+                        "--model-definition",
+                        json.dumps(source, sort_keys=True),
+                    ),
+                    processing_values={"task_model": source},
                 )
             )
     return tuple(result)

@@ -1,0 +1,3494 @@
+{
+ "module": "Anatomical Module",
+ "steps": [
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/initialized.complete",
+    "<ROOT>/gradient.sif",
+    "<ROOT>/image.sif",
+    "<ROOT>/template.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "initialized-complete-b101883f4a87",
+    "inputs": [],
+    "kind": "python",
+    "name": "Initialize Anatomical Outputs",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/initialized.complete"
+    ]
+   },
+   "name": "Initialize Anatomical Outputs",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/configuration.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "initialized-complete-b101883f4a87"
+    ],
+    "id": "configuration-json-ec5535dd5d60",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/initialized.complete"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Configuration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/configuration.json"
+    ]
+   },
+   "name": "Write Anatomical Configuration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/dependencies.complete"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "dependencies-complete-e46d3cfe6c17",
+    "inputs": [],
+    "kind": "python",
+    "name": "Check Anatomical Dependencies",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/dependencies.complete"
+    ]
+   },
+   "name": "Check Anatomical Dependencies",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/BIDS/demo/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-ses-1-t1w-nii-gz-4ea30b9a21fd",
+    "inputs": [
+     "<ROOT>/BIDS/demo/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Stage Session Anatomical Image",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w.nii.gz"
+    ]
+   },
+   "name": "Stage Session Anatomical Image",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w_desc-brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w_desc-brain_mask.nii.gz.tmp.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preN4Brain_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preN4Brain_T1w.nii.gz.tmp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"singularity\",\"run\",\"--cleanenv\",\"--bind\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat:<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat\",\"--bind\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level:<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level\",\"<ROOT>/image.sif\",\"-i\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w.nii.gz\",\"-o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preN4Brain_T1w.nii.gz.tmp.nii.gz\",\"-m\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w_desc-brain_mask.nii.gz.tmp.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-t1w-nii-gz-4ea30b9a21fd"
+    ],
+    "id": "sub-1-ses-1-t1w-desc-pren4brain-t1w-nii-gz-ec4d9cfdd1a9",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Brain Extraction",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preN4Brain_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w_desc-brain_mask.nii.gz"
+    ],
+    "scientific_signature": "{\"brain_extraction\":\"mri_synthstrip\",\"image\":\"<ROOT>/image.sif\"}"
+   },
+   "name": "Brain Extraction",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-biasField_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preproc_T1w.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"N4BiasFieldCorrection\",\"-d\",\"3\",\"-i\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w.nii.gz\",\"-o\",\"[<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preproc_T1w.nii.gz,<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-biasField_T1w.nii.gz]\",\"-x\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w_desc-brain_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-t1w-nii-gz-4ea30b9a21fd",
+     "sub-1-ses-1-t1w-desc-pren4brain-t1w-nii-gz-ec4d9cfdd1a9"
+    ],
+    "id": "sub-1-ses-1-t1w-desc-preproc-t1w-nii-gz-601a5b22675c",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w_desc-brain_mask.nii.gz"
+    ],
+    "kind": "command",
+    "name": "N4 Bias Field Correction",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-biasField_T1w.nii.gz"
+    ],
+    "scientific_signature": "{\"bias_field_retained\":true,\"mask_guided\":true,\"method\":\"N4BiasFieldCorrection\"}"
+   },
+   "name": "N4 Bias Field Correction",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/BIDS/demo/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-ses-2-t1w-nii-gz-1b3d08b273b1",
+    "inputs": [
+     "<ROOT>/BIDS/demo/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Stage Session Anatomical Image",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w.nii.gz"
+    ]
+   },
+   "name": "Stage Session Anatomical Image",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w_desc-brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w_desc-brain_mask.nii.gz.tmp.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preN4Brain_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preN4Brain_T1w.nii.gz.tmp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"singularity\",\"run\",\"--cleanenv\",\"--bind\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat:<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat\",\"--bind\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level:<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level\",\"<ROOT>/image.sif\",\"-i\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w.nii.gz\",\"-o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preN4Brain_T1w.nii.gz.tmp.nii.gz\",\"-m\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w_desc-brain_mask.nii.gz.tmp.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-2-t1w-nii-gz-1b3d08b273b1"
+    ],
+    "id": "sub-1-ses-2-t1w-desc-pren4brain-t1w-nii-gz-481592916707",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Brain Extraction",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preN4Brain_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w_desc-brain_mask.nii.gz"
+    ],
+    "scientific_signature": "{\"brain_extraction\":\"mri_synthstrip\",\"image\":\"<ROOT>/image.sif\"}"
+   },
+   "name": "Brain Extraction",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-biasField_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preproc_T1w.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"N4BiasFieldCorrection\",\"-d\",\"3\",\"-i\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w.nii.gz\",\"-o\",\"[<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preproc_T1w.nii.gz,<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-biasField_T1w.nii.gz]\",\"-x\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w_desc-brain_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-2-t1w-nii-gz-1b3d08b273b1",
+     "sub-1-ses-2-t1w-desc-pren4brain-t1w-nii-gz-481592916707"
+    ],
+    "id": "sub-1-ses-2-t1w-desc-preproc-t1w-nii-gz-3215dd6b0f50",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w_desc-brain_mask.nii.gz"
+    ],
+    "kind": "command",
+    "name": "N4 Bias Field Correction",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-biasField_T1w.nii.gz"
+    ],
+    "scientific_signature": "{\"bias_field_retained\":true,\"mask_guided\":true,\"method\":\"N4BiasFieldCorrection\"}"
+   },
+   "name": "N4 Bias Field Correction",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"fslmaths\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preproc_T1w.nii.gz\",\"-mas\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w_desc-brain_mask.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-t1w-desc-pren4brain-t1w-nii-gz-ec4d9cfdd1a9",
+     "sub-1-ses-1-t1w-desc-preproc-t1w-nii-gz-601a5b22675c"
+    ],
+    "id": "sub-1-ses-1-t1w-nii-gz-9ed88d76c444",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w_desc-brain_mask.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Apply Anatomical Brain Mask",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz"
+    ],
+    "scientific_signature": "{\"mask_application\":\"binary_multiplication\"}"
+   },
+   "name": "Apply Anatomical Brain Mask",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-t1w-desc-pren4brain-t1w-nii-gz-ec4d9cfdd1a9",
+     "sub-1-ses-1-t1w-desc-preproc-t1w-nii-gz-601a5b22675c",
+     "sub-1-ses-1-t1w-nii-gz-9ed88d76c444"
+    ],
+    "id": "sub-1-ses-1-t1w-json-bc4589b754f3",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/session_level/sub-1_ses-1_T1w_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w_desc-brain_mask.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Session Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.json"
+    ]
+   },
+   "name": "Write Session Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"fslmaths\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preproc_T1w.nii.gz\",\"-mas\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w_desc-brain_mask.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-2-t1w-desc-pren4brain-t1w-nii-gz-481592916707",
+     "sub-1-ses-2-t1w-desc-preproc-t1w-nii-gz-3215dd6b0f50"
+    ],
+    "id": "sub-1-ses-2-t1w-nii-gz-df2fa7e751be",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w_desc-brain_mask.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Apply Anatomical Brain Mask",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz"
+    ],
+    "scientific_signature": "{\"mask_application\":\"binary_multiplication\"}"
+   },
+   "name": "Apply Anatomical Brain Mask",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-2-t1w-desc-pren4brain-t1w-nii-gz-481592916707",
+     "sub-1-ses-2-t1w-desc-preproc-t1w-nii-gz-3215dd6b0f50",
+     "sub-1-ses-2-t1w-nii-gz-df2fa7e751be"
+    ],
+    "id": "sub-1-ses-2-t1w-json-3865726d1e18",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/session_level/sub-1_ses-2_T1w_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w_desc-brain_mask.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Session Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.json"
+    ]
+   },
+   "name": "Write Session Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/robust_template_T1w",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_robust_template\",\"--template\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz\",\"--satit\",\"--mapmov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/robust_template_T1w/T1w_\",\"--mov\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz\",\"--mov\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-t1w-nii-gz-9ed88d76c444",
+     "sub-1-ses-2-t1w-nii-gz-df2fa7e751be"
+    ],
+    "id": "sub-1-desc-selected-t1w-nii-gz-073e45c029bf",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Construct Subject T1w Robust Template",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz"
+    ],
+    "scientific_signature": "{\"selection_strategy\":\"average\"}"
+   },
+   "name": "Construct Subject T1w Robust Template",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"fslmaths\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz\",\"-bin\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-selected-t1w-nii-gz-073e45c029bf"
+    ],
+    "id": "sub-1-desc-selectedt1w-mask-nii-gz-b5e1e3ed058b",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Construct Preliminary Anatomical Mask",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz"
+    ]
+   },
+   "name": "Construct Preliminary Anatomical Mask",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"antsRegistration\",\"--dimensionality\",\"3\",\"--float\",\"0\",\"--collapse-output-transforms\",\"1\",\"--write-composite-transform\",\"0\",\"--output\",\"[<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_]\",\"--interpolation\",\"BSpline[3]\",\"--use-histogram-matching\",\"1\",\"--winsorize-image-intensities\",\"[0.005,0.995]\",\"--masks\",\"[<ROOT>/template.nii.gz,<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz]\",\"--initial-moving-transform\",\"[<ROOT>/template.nii.gz,<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz,1]\",\"--transform\",\"Rigid[0.1]\",\"--metric\",\"MI[<ROOT>/template.nii.gz,<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz,1,32,Regular,0.25]\",\"--convergence\",\"[1000x500x250x0,1e-6,10]\",\"--shrink-factors\",\"8x4x2x1\",\"--smoothing-sigmas\",\"3x2x1x0vox\"]",
+    "dependencies": [
+     "sub-1-desc-selected-t1w-nii-gz-073e45c029bf",
+     "sub-1-desc-selectedt1w-mask-nii-gz-b5e1e3ed058b"
+    ],
+    "id": "sub-1-0genericaffine-mat-69c8d773e5a0",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/template.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Rigid Anatomical Pose Registration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat"
+    ],
+    "scientific_signature": "{\"degrees_of_freedom\":6,\"metric\":\"mutual_information\",\"template_space\":\"MNI152NLin2009cAsym\"}"
+   },
+   "name": "Rigid Anatomical Pose Registration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_reference.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz",
+    "<ROOT>/template.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-selected-t1w-nii-gz-073e45c029bf",
+     "sub-1-desc-selectedt1w-mask-nii-gz-b5e1e3ed058b",
+     "sub-1-0genericaffine-mat-69c8d773e5a0"
+    ],
+    "id": "sub-1-space-t1w-reference-nii-gz-1d8f2c2091b5",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat"
+    ],
+    "kind": "python",
+    "name": "Construct Pose-Normalized Anatomical Grid",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_reference.nii.gz"
+    ],
+    "scientific_signature": "{\"extent\":\"anatomical_mask\",\"margin_mm\":5.0,\"resolution\":\"source\",\"transform_direction\":\"moving_to_fixed\"}"
+   },
+   "name": "Construct Pose-Normalized Anatomical Grid",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-orig_to-T1w_mode-image_xfm.mat",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-0genericaffine-mat-69c8d773e5a0"
+    ],
+    "id": "sub-1-from-orig-to-t1w-mode-image-xfm-mat-5d38568b13be",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat"
+    ],
+    "kind": "python",
+    "name": "Publish Anatomical Pose Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-orig_to-T1w_mode-image_xfm.mat"
+    ]
+   },
+   "name": "Publish Anatomical Pose Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-orig_mode-image_xfm.mat",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-0genericaffine-mat-69c8d773e5a0"
+    ],
+    "id": "sub-1-from-t1w-to-orig-mode-image-xfm-mat-a3f6fe4144fc",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat"
+    ],
+    "kind": "python",
+    "name": "Invert Anatomical Pose Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-orig_mode-image_xfm.mat"
+    ]
+   },
+   "name": "Invert Anatomical Pose Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-resampled_T1w.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"antsApplyTransforms\",\"-d\",\"3\",\"-i\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz\",\"-r\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_reference.nii.gz\",\"-o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-resampled_T1w.nii.gz\",\"-n\",\"BSpline[3]\",\"-t\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat\"]",
+    "dependencies": [
+     "sub-1-desc-selected-t1w-nii-gz-073e45c029bf",
+     "sub-1-0genericaffine-mat-69c8d773e5a0",
+     "sub-1-space-t1w-reference-nii-gz-1d8f2c2091b5"
+    ],
+    "id": "sub-1-space-t1w-desc-resampled-t1w-nii-gz-f488dae5308f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_reference.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat"
+    ],
+    "kind": "command",
+    "name": "Resample Anatomy to Reference",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-resampled_T1w.nii.gz"
+    ],
+    "scientific_signature": "{\"interpolation\":\"cubic_bspline\"}"
+   },
+   "name": "Resample Anatomy to Reference",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-brain_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"antsApplyTransforms\",\"-d\",\"3\",\"-i\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz\",\"-r\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_reference.nii.gz\",\"-o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-brain_mask.nii.gz\",\"-n\",\"NearestNeighbor\",\"-t\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat\"]",
+    "dependencies": [
+     "sub-1-desc-selectedt1w-mask-nii-gz-b5e1e3ed058b",
+     "sub-1-0genericaffine-mat-69c8d773e5a0",
+     "sub-1-space-t1w-reference-nii-gz-1d8f2c2091b5"
+    ],
+    "id": "sub-1-space-t1w-desc-brain-mask-nii-gz-d08f0133f659",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_reference.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat"
+    ],
+    "kind": "command",
+    "name": "Resample Anatomical Mask to Reference",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-brain_mask.nii.gz"
+    ],
+    "scientific_signature": "{\"interpolation\":\"nearest\"}"
+   },
+   "name": "Resample Anatomical Mask to Reference",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"fslmaths\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-resampled_T1w.nii.gz\",\"-mas\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-brain_mask.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-space-t1w-desc-resampled-t1w-nii-gz-f488dae5308f",
+     "sub-1-space-t1w-desc-brain-mask-nii-gz-d08f0133f659"
+    ],
+    "id": "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-resampled_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-brain_mask.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Finalize Pose-Normalized Anatomical Image",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "scientific_signature": "{\"mask_application\":\"nearest_neighbor_binary_mask\"}"
+   },
+   "name": "Finalize Pose-Normalized Anatomical Image",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-poseQC_metrics.json",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_reference.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz",
+    "<ROOT>/template.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-selected-t1w-nii-gz-073e45c029bf",
+     "sub-1-desc-selectedt1w-mask-nii-gz-b5e1e3ed058b",
+     "sub-1-0genericaffine-mat-69c8d773e5a0",
+     "sub-1-space-t1w-reference-nii-gz-1d8f2c2091b5",
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229"
+    ],
+    "id": "sub-1-space-t1w-desc-poseqc-metrics-json-ef1809418679",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selected_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subject_reference/sub-1_desc-selectedT1w_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_0GenericAffine.mat",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_reference.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Validate Anatomical Pose Alignment",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-poseQC_metrics.json"
+    ]
+   },
+   "name": "Validate Anatomical Pose Alignment",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-from-orig-to-t1w-mode-image-xfm-mat-5d38568b13be",
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-space-t1w-desc-poseqc-metrics-json-ef1809418679"
+    ],
+    "id": "sub-1-desc-preproc-t1w-json-c8157846451f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-orig_to-T1w_mode-image_xfm.mat",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-poseQC_metrics.json"
+    ],
+    "kind": "python",
+    "name": "Write Subject T1w Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.json"
+    ]
+   },
+   "name": "Write Subject T1w Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/.nro/templates/freesurfer",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-brain_mask.nii.gz",
+    "<ROOT>/image.sif",
+    "<ROOT>/license.txt"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-space-t1w-desc-brain-mask-nii-gz-d08f0133f659",
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229"
+    ],
+    "id": "001-mgz-8abb21270b25",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/pose_normalization/sub-1_space-T1w_desc-brain_mask.nii.gz",
+     "<ROOT>/image.sif",
+     "<ROOT>/license.txt"
+    ],
+    "kind": "directory",
+    "name": "FreeSurfer Recon-All",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/orig/001.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/T1.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/brainmask.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/ribbon.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/scripts/recon-all.done",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/.nro_recon_all_complete"
+    ],
+    "scientific_signature": "{\"backend\":\"FreeSurfer\",\"brainmask_intensity_source\":\"FreeSurfer_normalized_T1\",\"build\":\"freesurfer-linux-centos8_x86_64-7.4.1-20230613-7eb8460\",\"external_mask_resampling\":\"nearest_neighbor\",\"skull_stripping\":\"SynthStrip_external_mask\",\"version\":\"7.4.1\"}"
+   },
+   "name": "FreeSurfer Recon-All",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-cerebellum_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-cerebellum_mask_fs.nii.gz\",\"--match\",\"7\",\"--match\",\"8\",\"--match\",\"46\",\"--match\",\"47\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-cerebellum-mask-fs-nii-gz-26a64e0bd579",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract cerebellum FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-cerebellum_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract cerebellum FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-cerebellum_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-cerebellum_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-cerebellum_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-cerebellum-mask-fs-nii-gz-26a64e0bd579"
+    ],
+    "id": "sub-1-desc-cerebellum-mask-nii-gz-76d292d84d48",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-cerebellum_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-cerebellum_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-cerebellum_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-cerebellum-mask-json-344b79ca1eb6",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-cerebellum_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-thalamus_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-thalamus_mask_fs.nii.gz\",\"--match\",\"10\",\"--match\",\"49\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-thalamus-mask-fs-nii-gz-3b93c96f53ed",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract thalamus FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-thalamus_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract thalamus FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-thalamus_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-thalamus_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-thalamus_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-thalamus-mask-fs-nii-gz-3b93c96f53ed"
+    ],
+    "id": "sub-1-desc-thalamus-mask-nii-gz-86aceed02cc4",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-thalamus_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-thalamus_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-thalamus_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-thalamus-mask-json-c40606c37cb7",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-thalamus_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-caudate_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-caudate_mask_fs.nii.gz\",\"--match\",\"11\",\"--match\",\"50\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-caudate-mask-fs-nii-gz-780df3b82b41",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract caudate FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-caudate_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract caudate FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-caudate_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-caudate_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-caudate_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-caudate-mask-fs-nii-gz-780df3b82b41"
+    ],
+    "id": "sub-1-desc-caudate-mask-nii-gz-e273aac29b1f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-caudate_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-caudate_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-caudate_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-caudate-mask-json-aa38a9c3f97f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-caudate_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-putamen_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-putamen_mask_fs.nii.gz\",\"--match\",\"12\",\"--match\",\"51\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-putamen-mask-fs-nii-gz-a355ea1e7307",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract putamen FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-putamen_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract putamen FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-putamen_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-putamen_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-putamen_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-putamen-mask-fs-nii-gz-a355ea1e7307"
+    ],
+    "id": "sub-1-desc-putamen-mask-nii-gz-9522e369ee03",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-putamen_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-putamen_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-putamen_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-putamen-mask-json-c92bc291dfe5",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-putamen_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-pallidum_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-pallidum_mask_fs.nii.gz\",\"--match\",\"13\",\"--match\",\"52\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-pallidum-mask-fs-nii-gz-a9e9f8edcbb6",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract pallidum FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-pallidum_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract pallidum FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-pallidum_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-pallidum_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-pallidum_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-pallidum-mask-fs-nii-gz-a9e9f8edcbb6"
+    ],
+    "id": "sub-1-desc-pallidum-mask-nii-gz-2672e8dc80b4",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-pallidum_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-pallidum_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-pallidum_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-pallidum-mask-json-374e63f94f2a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-pallidum_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-brainStem_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-brainStem_mask_fs.nii.gz\",\"--match\",\"16\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-brainstem-mask-fs-nii-gz-5c1fd780aa9e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract brainStem FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-brainStem_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract brainStem FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brainStem_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-brainStem_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brainStem_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-brainstem-mask-fs-nii-gz-5c1fd780aa9e"
+    ],
+    "id": "sub-1-desc-brainstem-mask-nii-gz-6d3b8f594a25",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-brainStem_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brainStem_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brainStem_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-brainstem-mask-json-39e6ae9aa294",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brainStem_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-hippocampus_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-hippocampus_mask_fs.nii.gz\",\"--match\",\"17\",\"--match\",\"53\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-hippocampus-mask-fs-nii-gz-2626160e66e5",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract hippocampus FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-hippocampus_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract hippocampus FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-hippocampus_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-hippocampus_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-hippocampus_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-hippocampus-mask-fs-nii-gz-2626160e66e5"
+    ],
+    "id": "sub-1-desc-hippocampus-mask-nii-gz-ede00ab57eae",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-hippocampus_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-hippocampus_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-hippocampus_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-hippocampus-mask-json-cb7bd1bf376e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-hippocampus_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-amygdala_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-amygdala_mask_fs.nii.gz\",\"--match\",\"18\",\"--match\",\"54\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-amygdala-mask-fs-nii-gz-2a0762999b0d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract amygdala FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-amygdala_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract amygdala FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-amygdala_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-amygdala_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-amygdala_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-amygdala-mask-fs-nii-gz-2a0762999b0d"
+    ],
+    "id": "sub-1-desc-amygdala-mask-nii-gz-e9a0748e48fb",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/subcortical_masks/sub-1_desc-amygdala_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-amygdala_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-amygdala_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-amygdala-mask-json-92a3114cc325",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-amygdala_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-brain_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/brainmask.mgz\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-brain_mask_fs.nii.gz\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-brain-mask-fs-nii-gz-866f415f62cb",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/brainmask.mgz"
+    ],
+    "kind": "command",
+    "name": "Export FreeSurfer Volume",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-brain_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Export FreeSurfer Volume",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-brain_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-brain-mask-fs-nii-gz-866f415f62cb"
+    ],
+    "id": "sub-1-desc-brain-mask-nii-gz-237e69e3bf4d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-brain_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-brain-mask-json-eafdc644ad4a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/brainmask.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-grayMatter_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-grayMatter_mask_fs.nii.gz\",\"--match\",\"3\",\"--match\",\"42\",\"--match\",\"8\",\"--match\",\"47\",\"--match\",\"10\",\"--match\",\"49\",\"--match\",\"11\",\"--match\",\"50\",\"--match\",\"12\",\"--match\",\"51\",\"--match\",\"13\",\"--match\",\"52\",\"--match\",\"17\",\"--match\",\"53\",\"--match\",\"18\",\"--match\",\"54\",\"--match\",\"26\",\"--match\",\"58\",\"--match\",\"28\",\"--match\",\"60\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-graymatter-mask-fs-nii-gz-8103d1c66e20",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract Gray Matter FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-grayMatter_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract Gray Matter FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-grayMatter_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-grayMatter_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-grayMatter_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-graymatter-mask-fs-nii-gz-8103d1c66e20"
+    ],
+    "id": "sub-1-desc-graymatter-mask-nii-gz-4197f8b45365",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-grayMatter_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-grayMatter_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-grayMatter_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-graymatter-mask-json-a1e6f2b26f3e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/aseg.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-grayMatter_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-ribbon_mask_fs.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_binarize\",\"--i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/ribbon.mgz\",\"--min\",\"1\",\"--o\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-ribbon_mask_fs.nii.gz\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-ribbon-mask-fs-nii-gz-a79a3214d293",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/ribbon.mgz"
+    ],
+    "kind": "command",
+    "name": "Extract Cortical Ribbon FreeSurfer Labels",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-ribbon_mask_fs.nii.gz"
+    ]
+   },
+   "name": "Extract Cortical Ribbon FreeSurfer Labels",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-ribbon_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_vol2vol\",\"--mov\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-ribbon_mask_fs.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--regheader\",\"--interp\",\"nearest\",\"--o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-ribbon_mask.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-ribbon-mask-fs-nii-gz-a79a3214d293"
+    ],
+    "id": "sub-1-desc-ribbon-mask-nii-gz-7538d6f5e0da",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/core_masks/sub-1_desc-ribbon_mask_fs.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Resample Mask to Native Anatomy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-ribbon_mask.nii.gz"
+    ]
+   },
+   "name": "Resample Mask to Native Anatomy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-ribbon_mask.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-desc-ribbon-mask-json-06609e3c0210",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/ribbon.mgz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-ribbon_mask.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.dat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"tkregister2\",\"--mov\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/T1.mgz\",\"--regheader\",\"--reg\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.dat\",\"--noedit\",\"--fslregout\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.txt\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-from-t1w-to-fsnative-mode-image-xfm-txt-070a1f1b173b",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/T1.mgz"
+    ],
+    "kind": "command",
+    "name": "Construct T1w-to-fsnative Affine",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.txt"
+    ]
+   },
+   "name": "Construct T1w-to-fsnative Affine",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convert_xfm\",\"-omat\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt\",\"-inverse\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.txt\"]",
+    "dependencies": [
+     "sub-1-from-t1w-to-fsnative-mode-image-xfm-txt-070a1f1b173b"
+    ],
+    "id": "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.txt"
+    ],
+    "kind": "command",
+    "name": "Invert T1w-to-fsnative Affine",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt"
+    ]
+   },
+   "name": "Invert T1w-to-fsnative Affine",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-from-t1w-to-fsnative-mode-image-xfm-json-f3fa0340c218",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/T1.mgz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-from-fsnative-to-t1w-mode-image-xfm-json-5a98e3c7a731",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/T1.mgz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/T1.mgz\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-fs-t1-ref-nii-gz-d68b909c06b3",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/T1.mgz"
+    ],
+    "kind": "command",
+    "name": "Convert FreeSurfer T1 Reference to NIfTI",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz"
+    ]
+   },
+   "name": "Convert FreeSurfer T1 Reference to NIfTI",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_white.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"--to-scanner\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_white.surf.gii\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "scanner-sub-1-space-fsnative-hemi-l-white-surf-gii-0f92f72c8038",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white"
+    ],
+    "kind": "command",
+    "name": "Surface Conversion",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_white.surf.gii"
+    ]
+   },
+   "name": "Surface Conversion",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-apply-affine\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_white.surf.gii\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_white.surf.gii\",\"-flirt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+     "sub-1-fs-t1-ref-nii-gz-d68b909c06b3",
+     "scanner-sub-1-space-fsnative-hemi-l-white-surf-gii-0f92f72c8038"
+    ],
+    "id": "affined-sub-1-space-fsnative-hemi-l-white-surf-gii-12a36dffce64",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_white.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Surface Affine Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_white.surf.gii"
+    ]
+   },
+   "name": "Surface Affine Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_white.surf.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_white.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "affined-sub-1-space-fsnative-hemi-l-white-surf-gii-12a36dffce64"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-white-surf-gii-42e52b30c31e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_white.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Normalize Surface Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_white.surf.gii"
+    ]
+   },
+   "name": "Normalize Surface Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_white.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-white-surf-json-ecb2ceeaaff5",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_white.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_pial.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"--to-scanner\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.pial\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_pial.surf.gii\"]",
+    "dependencies": [],
+    "id": "scanner-sub-1-space-fsnative-hemi-l-pial-surf-gii-1ab9ff158462",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.pial"
+    ],
+    "kind": "command",
+    "name": "Surface Conversion",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_pial.surf.gii"
+    ]
+   },
+   "name": "Surface Conversion",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-apply-affine\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_pial.surf.gii\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_pial.surf.gii\",\"-flirt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+     "sub-1-fs-t1-ref-nii-gz-d68b909c06b3",
+     "scanner-sub-1-space-fsnative-hemi-l-pial-surf-gii-1ab9ff158462"
+    ],
+    "id": "affined-sub-1-space-fsnative-hemi-l-pial-surf-gii-e8c8459d33c9",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_pial.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Surface Affine Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_pial.surf.gii"
+    ]
+   },
+   "name": "Surface Affine Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_pial.surf.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_pial.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "affined-sub-1-space-fsnative-hemi-l-pial-surf-gii-e8c8459d33c9"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-pial-surf-gii-44af62eadb06",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_pial.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Normalize Surface Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_pial.surf.gii"
+    ]
+   },
+   "name": "Normalize Surface Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_pial.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-l-pial-surf-json-ba4e38edeb4e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.pial"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_pial.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_inflated.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"--to-scanner\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.inflated\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_inflated.surf.gii\"]",
+    "dependencies": [],
+    "id": "scanner-sub-1-space-fsnative-hemi-l-inflated-surf-gii-ae627550952d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.inflated"
+    ],
+    "kind": "command",
+    "name": "Surface Conversion",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_inflated.surf.gii"
+    ]
+   },
+   "name": "Surface Conversion",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-apply-affine\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_inflated.surf.gii\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_inflated.surf.gii\",\"-flirt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+     "sub-1-fs-t1-ref-nii-gz-d68b909c06b3",
+     "scanner-sub-1-space-fsnative-hemi-l-inflated-surf-gii-ae627550952d"
+    ],
+    "id": "affined-sub-1-space-fsnative-hemi-l-inflated-surf-gii-65cd77b65d36",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_inflated.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Surface Affine Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_inflated.surf.gii"
+    ]
+   },
+   "name": "Surface Affine Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_inflated.surf.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_inflated.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "affined-sub-1-space-fsnative-hemi-l-inflated-surf-gii-65cd77b65d36"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-inflated-surf-gii-0c13b9ce6ec1",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_inflated.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Normalize Surface Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_inflated.surf.gii"
+    ]
+   },
+   "name": "Normalize Surface Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_inflated.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-l-inflated-surf-json-9907809daa2f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.inflated"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_inflated.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_smoothwm.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"--to-scanner\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.smoothwm\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_smoothwm.surf.gii\"]",
+    "dependencies": [],
+    "id": "scanner-sub-1-space-fsnative-hemi-l-smoothwm-surf-gii-a96becc03190",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.smoothwm"
+    ],
+    "kind": "command",
+    "name": "Surface Conversion",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_smoothwm.surf.gii"
+    ]
+   },
+   "name": "Surface Conversion",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-apply-affine\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_smoothwm.surf.gii\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_smoothwm.surf.gii\",\"-flirt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+     "sub-1-fs-t1-ref-nii-gz-d68b909c06b3",
+     "scanner-sub-1-space-fsnative-hemi-l-smoothwm-surf-gii-a96becc03190"
+    ],
+    "id": "affined-sub-1-space-fsnative-hemi-l-smoothwm-surf-gii-8e36df6a7081",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-L_smoothwm.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Surface Affine Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_smoothwm.surf.gii"
+    ]
+   },
+   "name": "Surface Affine Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_smoothwm.surf.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_smoothwm.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "affined-sub-1-space-fsnative-hemi-l-smoothwm-surf-gii-8e36df6a7081"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-smoothwm-surf-gii-ffe77ac20f22",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-L_smoothwm.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Normalize Surface Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_smoothwm.surf.gii"
+    ]
+   },
+   "name": "Normalize Surface Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_smoothwm.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-l-smoothwm-surf-json-5d42ffd5f2d5",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.smoothwm"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_smoothwm.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sphere.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sphere.surf.gii\"]",
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-l-sphere-surf-gii-dd391e737f91",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere"
+    ],
+    "kind": "command",
+    "name": "Convert FreeSurfer Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sphere.surf.gii"
+    ]
+   },
+   "name": "Convert FreeSurfer Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sphere.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-l-sphere-surf-json-42647720110f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sphere.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_desc-reg_sphere.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere.reg\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_desc-reg_sphere.surf.gii\"]",
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-l-desc-reg-sphere-surf-gii-78b494404018",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere.reg"
+    ],
+    "kind": "command",
+    "name": "Convert FreeSurfer Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_desc-reg_sphere.surf.gii"
+    ]
+   },
+   "name": "Convert FreeSurfer Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_desc-reg_sphere.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-l-desc-reg-sphere-surf-json-24d2ae356413",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere.reg"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_desc-reg_sphere.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/lh.sub-1_space-fsnative_hemi-L_thickness.shape.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-L_thickness.shape.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"-c\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.thickness\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/lh.sub-1_space-fsnative_hemi-L_thickness.shape.gii\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-thickness-shape-gii-3c1061320100",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.thickness",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white"
+    ],
+    "kind": "command",
+    "name": "Convert FreeSurfer Cortical Thickness Metric",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-L_thickness.shape.gii"
+    ]
+   },
+   "name": "Convert FreeSurfer Cortical Thickness Metric",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_thickness.shape.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-L_thickness.shape.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-space-fsnative-hemi-l-thickness-shape-gii-3c1061320100"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-thickness-shape-gii-36f158ceafc1",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-L_thickness.shape.gii"
+    ],
+    "kind": "python",
+    "name": "Assign Cortical Thickness Metric Structure",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_thickness.shape.gii"
+    ],
+    "scientific_signature": "{\"anatomical_structure_primary\":\"CortexLeft\"}"
+   },
+   "name": "Assign Cortical Thickness Metric Structure",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_thickness.shape.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-thickness-shape-json-4101ca4fca84",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.thickness",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_thickness.shape.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/lh.sub-1_space-fsnative_hemi-L_sulc.shape.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-L_sulc.shape.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"-c\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sulc\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/lh.sub-1_space-fsnative_hemi-L_sulc.shape.gii\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-sulc-shape-gii-fa2ffc348fde",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sulc",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white"
+    ],
+    "kind": "command",
+    "name": "Convert FreeSurfer Sulcal Depth Metric",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-L_sulc.shape.gii"
+    ]
+   },
+   "name": "Convert FreeSurfer Sulcal Depth Metric",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sulc.shape.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-L_sulc.shape.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-space-fsnative-hemi-l-sulc-shape-gii-fa2ffc348fde"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-sulc-shape-gii-daa0aad52b5b",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-L_sulc.shape.gii"
+    ],
+    "kind": "python",
+    "name": "Assign Sulcal Depth Metric Structure",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sulc.shape.gii"
+    ],
+    "scientific_signature": "{\"anatomical_structure_primary\":\"CortexLeft\"}"
+   },
+   "name": "Assign Sulcal Depth Metric Structure",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sulc.shape.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-sulc-shape-json-490d53acb86a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sulc",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.white"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sulc.shape.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-average\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_midthickness.surf.gii\",\"-surf\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_white.surf.gii\",\"-surf\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_pial.surf.gii\"]",
+    "dependencies": [
+     "sub-1-space-fsnative-hemi-l-white-surf-gii-42e52b30c31e",
+     "sub-1-space-fsnative-hemi-l-pial-surf-gii-44af62eadb06"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-midthickness-surf-gii-18aa94d48802",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_white.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_pial.surf.gii"
+    ],
+    "kind": "command",
+    "name": "Construct Midthickness Surface",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_midthickness.surf.gii"
+    ]
+   },
+   "name": "Construct Midthickness Surface",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_midthickness.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-space-fsnative-hemi-l-white-surf-gii-42e52b30c31e",
+     "sub-1-space-fsnative-hemi-l-pial-surf-gii-44af62eadb06"
+    ],
+    "id": "sub-1-space-fsnative-hemi-l-midthickness-surf-json-0787424a7cc8",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_white.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_pial.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_midthickness.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_white.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"--to-scanner\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_white.surf.gii\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "scanner-sub-1-space-fsnative-hemi-r-white-surf-gii-39a2f6f4d198",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white"
+    ],
+    "kind": "command",
+    "name": "Surface Conversion",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_white.surf.gii"
+    ]
+   },
+   "name": "Surface Conversion",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-apply-affine\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_white.surf.gii\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_white.surf.gii\",\"-flirt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+     "sub-1-fs-t1-ref-nii-gz-d68b909c06b3",
+     "scanner-sub-1-space-fsnative-hemi-r-white-surf-gii-39a2f6f4d198"
+    ],
+    "id": "affined-sub-1-space-fsnative-hemi-r-white-surf-gii-8d26ecfcb6d4",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_white.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Surface Affine Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_white.surf.gii"
+    ]
+   },
+   "name": "Surface Affine Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_white.surf.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_white.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "affined-sub-1-space-fsnative-hemi-r-white-surf-gii-8d26ecfcb6d4"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-white-surf-gii-6e2d54925c8b",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_white.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Normalize Surface Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_white.surf.gii"
+    ]
+   },
+   "name": "Normalize Surface Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_white.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-white-surf-json-0c4f32bc1e37",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_white.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_pial.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"--to-scanner\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.pial\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_pial.surf.gii\"]",
+    "dependencies": [],
+    "id": "scanner-sub-1-space-fsnative-hemi-r-pial-surf-gii-d6354ed32e9d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.pial"
+    ],
+    "kind": "command",
+    "name": "Surface Conversion",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_pial.surf.gii"
+    ]
+   },
+   "name": "Surface Conversion",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-apply-affine\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_pial.surf.gii\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_pial.surf.gii\",\"-flirt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+     "sub-1-fs-t1-ref-nii-gz-d68b909c06b3",
+     "scanner-sub-1-space-fsnative-hemi-r-pial-surf-gii-d6354ed32e9d"
+    ],
+    "id": "affined-sub-1-space-fsnative-hemi-r-pial-surf-gii-0211bb1122ad",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_pial.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Surface Affine Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_pial.surf.gii"
+    ]
+   },
+   "name": "Surface Affine Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_pial.surf.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_pial.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "affined-sub-1-space-fsnative-hemi-r-pial-surf-gii-0211bb1122ad"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-pial-surf-gii-ed31fabb8047",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_pial.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Normalize Surface Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_pial.surf.gii"
+    ]
+   },
+   "name": "Normalize Surface Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_pial.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-r-pial-surf-json-7e8b30cafd61",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.pial"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_pial.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_inflated.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"--to-scanner\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.inflated\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_inflated.surf.gii\"]",
+    "dependencies": [],
+    "id": "scanner-sub-1-space-fsnative-hemi-r-inflated-surf-gii-ae95c9d45282",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.inflated"
+    ],
+    "kind": "command",
+    "name": "Surface Conversion",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_inflated.surf.gii"
+    ]
+   },
+   "name": "Surface Conversion",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-apply-affine\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_inflated.surf.gii\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_inflated.surf.gii\",\"-flirt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+     "sub-1-fs-t1-ref-nii-gz-d68b909c06b3",
+     "scanner-sub-1-space-fsnative-hemi-r-inflated-surf-gii-ae95c9d45282"
+    ],
+    "id": "affined-sub-1-space-fsnative-hemi-r-inflated-surf-gii-073d15079685",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_inflated.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Surface Affine Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_inflated.surf.gii"
+    ]
+   },
+   "name": "Surface Affine Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_inflated.surf.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_inflated.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "affined-sub-1-space-fsnative-hemi-r-inflated-surf-gii-073d15079685"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-inflated-surf-gii-7aee8531bdc7",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_inflated.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Normalize Surface Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_inflated.surf.gii"
+    ]
+   },
+   "name": "Normalize Surface Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_inflated.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-r-inflated-surf-json-76a3dc809ef0",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.inflated"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_inflated.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_smoothwm.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"--to-scanner\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.smoothwm\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_smoothwm.surf.gii\"]",
+    "dependencies": [],
+    "id": "scanner-sub-1-space-fsnative-hemi-r-smoothwm-surf-gii-ed78d3249cc9",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.smoothwm"
+    ],
+    "kind": "command",
+    "name": "Surface Conversion",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_smoothwm.surf.gii"
+    ]
+   },
+   "name": "Surface Conversion",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-apply-affine\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_smoothwm.surf.gii\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_smoothwm.surf.gii\",\"-flirt\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+     "sub-1-fs-t1-ref-nii-gz-d68b909c06b3",
+     "scanner-sub-1-space-fsnative-hemi-r-smoothwm-surf-gii-ed78d3249cc9"
+    ],
+    "id": "affined-sub-1-space-fsnative-hemi-r-smoothwm-surf-gii-1d0789e2abe3",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/scanner_sub-1_space-fsnative_hemi-R_smoothwm.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/sub-1_fs_t1_ref.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Surface Affine Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_smoothwm.surf.gii"
+    ]
+   },
+   "name": "Surface Affine Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_smoothwm.surf.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_smoothwm.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "affined-sub-1-space-fsnative-hemi-r-smoothwm-surf-gii-1d0789e2abe3"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-smoothwm-surf-gii-7f000147519f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/affined_sub-1_space-fsnative_hemi-R_smoothwm.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Normalize Surface Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_smoothwm.surf.gii"
+    ]
+   },
+   "name": "Normalize Surface Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_smoothwm.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-r-smoothwm-surf-json-89782c0a7534",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.smoothwm"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_smoothwm.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sphere.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sphere.surf.gii\"]",
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-r-sphere-surf-gii-b87c50f4c2f4",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere"
+    ],
+    "kind": "command",
+    "name": "Convert FreeSurfer Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sphere.surf.gii"
+    ]
+   },
+   "name": "Convert FreeSurfer Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sphere.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-r-sphere-surf-json-76087a11280a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sphere.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_desc-reg_sphere.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere.reg\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_desc-reg_sphere.surf.gii\"]",
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-r-desc-reg-sphere-surf-gii-233d5da58152",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere.reg"
+    ],
+    "kind": "command",
+    "name": "Convert FreeSurfer Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_desc-reg_sphere.surf.gii"
+    ]
+   },
+   "name": "Convert FreeSurfer Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_desc-reg_sphere.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-space-fsnative-hemi-r-desc-reg-sphere-surf-json-6e230b024b85",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere.reg"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_desc-reg_sphere.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/rh.sub-1_space-fsnative_hemi-R_thickness.shape.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-R_thickness.shape.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"-c\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.thickness\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/rh.sub-1_space-fsnative_hemi-R_thickness.shape.gii\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-thickness-shape-gii-96d0b1c81b9e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.thickness",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white"
+    ],
+    "kind": "command",
+    "name": "Convert FreeSurfer Cortical Thickness Metric",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-R_thickness.shape.gii"
+    ]
+   },
+   "name": "Convert FreeSurfer Cortical Thickness Metric",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_thickness.shape.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-R_thickness.shape.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-space-fsnative-hemi-r-thickness-shape-gii-96d0b1c81b9e"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-thickness-shape-gii-c5ed50284322",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-R_thickness.shape.gii"
+    ],
+    "kind": "python",
+    "name": "Assign Cortical Thickness Metric Structure",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_thickness.shape.gii"
+    ],
+    "scientific_signature": "{\"anatomical_structure_primary\":\"CortexRight\"}"
+   },
+   "name": "Assign Cortical Thickness Metric Structure",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_thickness.shape.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-thickness-shape-json-3974dc25e6bc",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.thickness",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_thickness.shape.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/rh.sub-1_space-fsnative_hemi-R_sulc.shape.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-R_sulc.shape.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"-c\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sulc\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white\",\"<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/rh.sub-1_space-fsnative_hemi-R_sulc.shape.gii\"]",
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-sulc-shape-gii-61b1e4c03349",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sulc",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white"
+    ],
+    "kind": "command",
+    "name": "Convert FreeSurfer Sulcal Depth Metric",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-R_sulc.shape.gii"
+    ]
+   },
+   "name": "Convert FreeSurfer Sulcal Depth Metric",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sulc.shape.gii",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-R_sulc.shape.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-space-fsnative-hemi-r-sulc-shape-gii-61b1e4c03349"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-sulc-shape-gii-f73670375eb0",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/surface_export/metric_conversion/sub-1_space-fsnative_hemi-R_sulc.shape.gii"
+    ],
+    "kind": "python",
+    "name": "Assign Sulcal Depth Metric Structure",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sulc.shape.gii"
+    ],
+    "scientific_signature": "{\"anatomical_structure_primary\":\"CortexRight\"}"
+   },
+   "name": "Assign Sulcal Depth Metric Structure",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sulc.shape.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "001-mgz-8abb21270b25"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-sulc-shape-json-48277ec1e46f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sulc",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.white"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sulc.shape.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-surface-average\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_midthickness.surf.gii\",\"-surf\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_white.surf.gii\",\"-surf\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_pial.surf.gii\"]",
+    "dependencies": [
+     "sub-1-space-fsnative-hemi-r-white-surf-gii-6e2d54925c8b",
+     "sub-1-space-fsnative-hemi-r-pial-surf-gii-ed31fabb8047"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-midthickness-surf-gii-02716c8c8140",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_white.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_pial.surf.gii"
+    ],
+    "kind": "command",
+    "name": "Construct Midthickness Surface",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_midthickness.surf.gii"
+    ]
+   },
+   "name": "Construct Midthickness Surface",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_midthickness.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-space-fsnative-hemi-r-white-surf-gii-6e2d54925c8b",
+     "sub-1-space-fsnative-hemi-r-pial-surf-gii-ed31fabb8047"
+    ],
+    "id": "sub-1-space-fsnative-hemi-r-midthickness-surf-json-75434400feeb",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_white.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_pial.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_midthickness.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-L_mode-surface_xfm.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere.reg\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-L_mode-surface_xfm.surf.gii\"]",
+    "dependencies": [],
+    "id": "sub-1-from-fsnative-to-fsaverage6-hemi-l-mode-surface-xfm-surf-gii-8fe40ccb13ad",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere.reg"
+    ],
+    "kind": "command",
+    "name": "Export Hemisphere L fsnative-to-fsaverage6 Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-L_mode-surface_xfm.surf.gii"
+    ]
+   },
+   "name": "Export Hemisphere L fsnative-to-fsaverage6 Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/L.sphere.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-L_mode-surface_xfm.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-from-fsaverage6-to-fsnative-hemi-l-mode-surface-xfm-surf-gii-74f9966ff059",
+    "inputs": [
+     "<ROOT>/L.sphere.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Export Hemisphere L fsaverage6-to-fsnative Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-L_mode-surface_xfm.surf.gii"
+    ]
+   },
+   "name": "Export Hemisphere L fsaverage6-to-fsnative Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-L_mode-surface_xfm.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-from-fsnative-to-fsaverage6-hemi-l-mode-surface-xfm-surf-json-9b1f2440f51c",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere.reg",
+     "<ROOT>/L.sphere.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-L_mode-surface_xfm.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-L_mode-surface_xfm.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-from-fsaverage6-to-fsnative-hemi-l-mode-surface-xfm-surf-json-dc1fbb5739e6",
+    "inputs": [
+     "<ROOT>/L.sphere.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/lh.sphere.reg"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-L_mode-surface_xfm.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-R_mode-surface_xfm.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere.reg\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-R_mode-surface_xfm.surf.gii\"]",
+    "dependencies": [],
+    "id": "sub-1-from-fsnative-to-fsaverage6-hemi-r-mode-surface-xfm-surf-gii-64214bffaad8",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere.reg"
+    ],
+    "kind": "command",
+    "name": "Export Hemisphere R fsnative-to-fsaverage6 Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-R_mode-surface_xfm.surf.gii"
+    ]
+   },
+   "name": "Export Hemisphere R fsnative-to-fsaverage6 Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-R_mode-surface_xfm.surf.gii",
+    "<ROOT>/R.sphere.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-from-fsaverage6-to-fsnative-hemi-r-mode-surface-xfm-surf-gii-1770936af5e0",
+    "inputs": [
+     "<ROOT>/R.sphere.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Export Hemisphere R fsaverage6-to-fsnative Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-R_mode-surface_xfm.surf.gii"
+    ]
+   },
+   "name": "Export Hemisphere R fsaverage6-to-fsnative Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-R_mode-surface_xfm.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-from-fsnative-to-fsaverage6-hemi-r-mode-surface-xfm-surf-json-b639c8c50fbf",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere.reg",
+     "<ROOT>/R.sphere.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-R_mode-surface_xfm.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-R_mode-surface_xfm.surf.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-from-fsaverage6-to-fsnative-hemi-r-mode-surface-xfm-surf-json-9dddeb556c7a",
+    "inputs": [
+     "<ROOT>/R.sphere.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/surf/rh.sphere.reg"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-R_mode-surface_xfm.surf.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsaverage6_hemi-L_mode-image+surface_xfm.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-from-fsnative-to-fsaverage6-hemi-l-mode-surface-xfm-surf-gii-8fe40ccb13ad"
+    ],
+    "id": "sub-1-from-t1w-to-fsaverage6-hemi-l-mode-image-surface-xfm-json-f02915018769",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-L_mode-surface_xfm.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Write Hemisphere L T1w-to-fsaverage6 Transform Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsaverage6_hemi-L_mode-image+surface_xfm.json"
+    ]
+   },
+   "name": "Write Hemisphere L T1w-to-fsaverage6 Transform Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-T1w_hemi-L_mode-surface+image_xfm.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-from-fsaverage6-to-fsnative-hemi-l-mode-surface-xfm-surf-gii-74f9966ff059"
+    ],
+    "id": "sub-1-from-fsaverage6-to-t1w-hemi-l-mode-surface-image-xfm-json-5d8443c9d9bb",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-L_mode-surface_xfm.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Write Hemisphere L fsaverage6-to-T1w Transform Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-T1w_hemi-L_mode-surface+image_xfm.json"
+    ]
+   },
+   "name": "Write Hemisphere L fsaverage6-to-T1w Transform Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsaverage6_hemi-R_mode-image+surface_xfm.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-from-fsnative-to-fsaverage6-hemi-r-mode-surface-xfm-surf-gii-64214bffaad8"
+    ],
+    "id": "sub-1-from-t1w-to-fsaverage6-hemi-r-mode-image-surface-xfm-json-5bc722323548",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-R_mode-surface_xfm.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Write Hemisphere R T1w-to-fsaverage6 Transform Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsaverage6_hemi-R_mode-image+surface_xfm.json"
+    ]
+   },
+   "name": "Write Hemisphere R T1w-to-fsaverage6 Transform Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-T1w_hemi-R_mode-surface+image_xfm.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-from-fsaverage6-to-fsnative-hemi-r-mode-surface-xfm-surf-gii-1770936af5e0"
+    ],
+    "id": "sub-1-from-fsaverage6-to-t1w-hemi-r-mode-surface-image-xfm-json-2102de309c5d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-R_mode-surface_xfm.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Write Hemisphere R fsaverage6-to-T1w Transform Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-T1w_hemi-R_mode-surface+image_xfm.json"
+    ]
+   },
+   "name": "Write Hemisphere R fsaverage6-to-T1w Transform Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ants_mni_/sub-1_"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"antsRegistration\",\"--dimensionality\",\"3\",\"--float\",\"0\",\"--collapse-output-transforms\",\"1\",\"--write-composite-transform\",\"1\",\"--output\",\"[<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ants_mni_/sub-1_]\",\"--interpolation\",\"LanczosWindowedSinc\",\"--use-histogram-matching\",\"1\",\"--winsorize-image-intensities\",\"[0.005,0.995]\",\"--masks\",\"[<ROOT>/template.nii.gz,<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.nii.gz]\",\"--initial-moving-transform\",\"[<ROOT>/template.nii.gz,<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz,1]\",\"--transform\",\"Rigid[0.1]\",\"--metric\",\"MI[<ROOT>/template.nii.gz,<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz,1,32,Regular,0.25]\",\"--convergence\",\"[1000x500x250x0,1e-6,10]\",\"--shrink-factors\",\"8x4x2x1\",\"--smoothing-sigmas\",\"3x2x1x0vox\",\"--transform\",\"Affine[0.1]\",\"--metric\",\"MI[<ROOT>/template.nii.gz,<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz,1,32,Regular,0.25]\",\"--convergence\",\"[1000x500x250x0,1e-6,10]\",\"--shrink-factors\",\"8x4x2x1\",\"--smoothing-sigmas\",\"3x2x1x0vox\",\"--transform\",\"SyN[0.1,3,0]\",\"--metric\",\"CC[<ROOT>/template.nii.gz,<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz,1,4]\",\"--convergence\",\"[100x70x50x20,1e-6,10]\",\"--shrink-factors\",\"8x4x2x1\",\"--smoothing-sigmas\",\"3x2x1x0vox\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-brain-mask-nii-gz-237e69e3bf4d"
+    ],
+    "id": "sub-1-composite-h5-7528405ac2ea",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/template.nii.gz"
+    ],
+    "kind": "command",
+    "name": "SyN Registration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ants_mni_/sub-1_Composite.h5",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ants_mni_/sub-1_InverseComposite.h5"
+    ]
+   },
+   "name": "SyN Registration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ants_mni_/sub-1_Composite.h5",
+    "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ants_mni_/sub-1_InverseComposite.h5"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-composite-h5-7528405ac2ea"
+    ],
+    "id": "sub-1-from-t1w-to-mni152nlin2009casym-mode-image-xfm-h5-ede468233069",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ants_mni_/sub-1_Composite.h5",
+     "<ROOT>/NRO_DEV/dev/WORK/demo/derivatives/nro/anat/main/sub-1/ants_mni_/sub-1_InverseComposite.h5"
+    ],
+    "kind": "python",
+    "name": "Finalize MNI Composite Transforms",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5"
+    ]
+   },
+   "name": "Finalize MNI Composite Transforms",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-brain-mask-nii-gz-237e69e3bf4d"
+    ],
+    "id": "sub-1-from-t1w-to-mni152nlin2009casym-mode-image-xfm-json-e4201c500342",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/template.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-desc-brain-mask-nii-gz-237e69e3bf4d"
+    ],
+    "id": "sub-1-from-mni152nlin2009casym-to-t1w-mode-image-xfm-json-70f317ad29f8",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/template.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-mniToT1wQC.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"antsApplyTransforms\",\"-d\",\"3\",\"-i\",\"<ROOT>/template.nii.gz\",\"-r\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"-o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-mniToT1wQC.nii.gz\",\"-n\",\"BSpline[3]\",\"-t\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-t1w-to-mni152nlin2009casym-mode-image-xfm-h5-ede468233069"
+    ],
+    "id": "sub-1-space-t1w-desc-mnitot1wqc-nii-gz-c5c8ea21ef9a",
+    "inputs": [
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5"
+    ],
+    "kind": "command",
+    "name": "Write MNI152NLin2009cAsym-to-T1w QC Image",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-mniToT1wQC.nii.gz"
+    ],
+    "scientific_signature": "{\"interpolation\":\"cubic_bspline\",\"role\":\"registration_qc\"}"
+   },
+   "name": "Write MNI152NLin2009cAsym-to-T1w QC Image",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-mniToT1wQC.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229"
+    ],
+    "id": "sub-1-space-t1w-desc-mnitot1wqc-json-da1ba1ea144d",
+    "inputs": [
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-mniToT1wQC.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-MNI152NLin2009cAsym_desc-t1ToMNIQC.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"antsApplyTransforms\",\"-d\",\"3\",\"-i\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz\",\"-r\",\"<ROOT>/template.nii.gz\",\"-o\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-MNI152NLin2009cAsym_desc-t1ToMNIQC.nii.gz\",\"-n\",\"BSpline[3]\",\"-t\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5\"]",
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-from-t1w-to-mni152nlin2009casym-mode-image-xfm-h5-ede468233069"
+    ],
+    "id": "sub-1-space-mni152nlin2009casym-desc-t1tomniqc-nii-gz-8942a35441d2",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/template.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5"
+    ],
+    "kind": "command",
+    "name": "Write T1w-to-MNI152NLin2009cAsym QC Image",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-MNI152NLin2009cAsym_desc-t1ToMNIQC.nii.gz"
+    ],
+    "scientific_signature": "{\"interpolation\":\"cubic_bspline\",\"role\":\"registration_qc\"}"
+   },
+   "name": "Write T1w-to-MNI152NLin2009cAsym QC Image",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-MNI152NLin2009cAsym_desc-t1ToMNIQC.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229"
+    ],
+    "id": "sub-1-space-mni152nlin2009casym-desc-t1tomniqc-json-a9e3f0462239",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/template.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Metadata",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-MNI152NLin2009cAsym_desc-t1ToMNIQC.json"
+    ]
+   },
+   "name": "Write Anatomical Metadata",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-amygdala_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brainStem_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-caudate_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-cerebellum_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-grayMatter_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-hippocampus_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-pallidum_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preprocessAnat_manifest.json",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-putamen_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-ribbon_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-thalamus_mask.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsaverage6_hemi-L_mode-image+surface_xfm.json",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsaverage6_hemi-R_mode-image+surface_xfm.json",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.txt",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-orig_mode-image_xfm.mat",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-T1w_hemi-L_mode-surface+image_xfm.json",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-T1w_hemi-R_mode-surface+image_xfm.json",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-L_mode-surface_xfm.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-R_mode-surface_xfm.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-L_mode-surface_xfm.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-R_mode-surface_xfm.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-orig_to-T1w_mode-image_xfm.mat",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-MNI152NLin2009cAsym_desc-t1ToMNIQC.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-mniToT1wQC.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-poseQC_metrics.json",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_desc-reg_sphere.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_inflated.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_midthickness.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_pial.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_smoothwm.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sphere.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sulc.shape.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_thickness.shape.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_white.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_desc-reg_sphere.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_inflated.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_midthickness.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_pial.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_smoothwm.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sphere.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sulc.shape.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_thickness.shape.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_white.surf.gii",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz"
+   ],
+   "completion_boundary": true,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-t1w-nii-gz-9ed88d76c444",
+     "sub-1-ses-2-t1w-nii-gz-df2fa7e751be",
+     "sub-1-from-orig-to-t1w-mode-image-xfm-mat-5d38568b13be",
+     "sub-1-from-t1w-to-orig-mode-image-xfm-mat-a3f6fe4144fc",
+     "sub-1-desc-preproc-t1w-nii-gz-a43cb21c0229",
+     "sub-1-space-t1w-desc-poseqc-metrics-json-ef1809418679",
+     "sub-1-desc-cerebellum-mask-nii-gz-76d292d84d48",
+     "sub-1-desc-thalamus-mask-nii-gz-86aceed02cc4",
+     "sub-1-desc-caudate-mask-nii-gz-e273aac29b1f",
+     "sub-1-desc-putamen-mask-nii-gz-9522e369ee03",
+     "sub-1-desc-pallidum-mask-nii-gz-2672e8dc80b4",
+     "sub-1-desc-brainstem-mask-nii-gz-6d3b8f594a25",
+     "sub-1-desc-hippocampus-mask-nii-gz-ede00ab57eae",
+     "sub-1-desc-amygdala-mask-nii-gz-e9a0748e48fb",
+     "sub-1-desc-brain-mask-nii-gz-237e69e3bf4d",
+     "sub-1-desc-graymatter-mask-nii-gz-4197f8b45365",
+     "sub-1-desc-ribbon-mask-nii-gz-7538d6f5e0da",
+     "sub-1-from-t1w-to-fsnative-mode-image-xfm-txt-070a1f1b173b",
+     "sub-1-from-fsnative-to-t1w-mode-image-xfm-txt-e6660f41dbf8",
+     "sub-1-space-fsnative-hemi-l-white-surf-gii-42e52b30c31e",
+     "sub-1-space-fsnative-hemi-l-pial-surf-gii-44af62eadb06",
+     "sub-1-space-fsnative-hemi-l-inflated-surf-gii-0c13b9ce6ec1",
+     "sub-1-space-fsnative-hemi-l-smoothwm-surf-gii-ffe77ac20f22",
+     "sub-1-space-fsnative-hemi-l-sphere-surf-gii-dd391e737f91",
+     "sub-1-space-fsnative-hemi-l-desc-reg-sphere-surf-gii-78b494404018",
+     "sub-1-space-fsnative-hemi-l-thickness-shape-gii-36f158ceafc1",
+     "sub-1-space-fsnative-hemi-l-sulc-shape-gii-daa0aad52b5b",
+     "sub-1-space-fsnative-hemi-l-midthickness-surf-gii-18aa94d48802",
+     "sub-1-space-fsnative-hemi-r-white-surf-gii-6e2d54925c8b",
+     "sub-1-space-fsnative-hemi-r-pial-surf-gii-ed31fabb8047",
+     "sub-1-space-fsnative-hemi-r-inflated-surf-gii-7aee8531bdc7",
+     "sub-1-space-fsnative-hemi-r-smoothwm-surf-gii-7f000147519f",
+     "sub-1-space-fsnative-hemi-r-sphere-surf-gii-b87c50f4c2f4",
+     "sub-1-space-fsnative-hemi-r-desc-reg-sphere-surf-gii-233d5da58152",
+     "sub-1-space-fsnative-hemi-r-thickness-shape-gii-c5ed50284322",
+     "sub-1-space-fsnative-hemi-r-sulc-shape-gii-f73670375eb0",
+     "sub-1-space-fsnative-hemi-r-midthickness-surf-gii-02716c8c8140",
+     "sub-1-from-fsnative-to-fsaverage6-hemi-l-mode-surface-xfm-surf-gii-8fe40ccb13ad",
+     "sub-1-from-fsaverage6-to-fsnative-hemi-l-mode-surface-xfm-surf-gii-74f9966ff059",
+     "sub-1-from-fsnative-to-fsaverage6-hemi-r-mode-surface-xfm-surf-gii-64214bffaad8",
+     "sub-1-from-fsaverage6-to-fsnative-hemi-r-mode-surface-xfm-surf-gii-1770936af5e0",
+     "sub-1-from-t1w-to-fsaverage6-hemi-l-mode-image-surface-xfm-json-f02915018769",
+     "sub-1-from-fsaverage6-to-t1w-hemi-l-mode-surface-image-xfm-json-5d8443c9d9bb",
+     "sub-1-from-t1w-to-fsaverage6-hemi-r-mode-image-surface-xfm-json-5bc722323548",
+     "sub-1-from-fsaverage6-to-t1w-hemi-r-mode-surface-image-xfm-json-2102de309c5d",
+     "sub-1-from-t1w-to-mni152nlin2009casym-mode-image-xfm-h5-ede468233069",
+     "sub-1-space-t1w-desc-mnitot1wqc-nii-gz-c5c8ea21ef9a",
+     "sub-1-space-mni152nlin2009casym-desc-t1tomniqc-nii-gz-8942a35441d2"
+    ],
+    "id": "sub-1-desc-preprocessanat-manifest-json-7a39ad6446d6",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preproc_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brain_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-grayMatter_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-ribbon_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-cerebellum_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-thalamus_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-caudate_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-putamen_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-pallidum_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-brainStem_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-hippocampus_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-amygdala_mask.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_white.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_pial.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_inflated.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_smoothwm.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sphere.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_desc-reg_sphere.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_thickness.shape.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_sulc.shape.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-L_midthickness.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_white.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_pial.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_inflated.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_smoothwm.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sphere.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_desc-reg_sphere.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_thickness.shape.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_sulc.shape.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-fsnative_hemi-R_midthickness.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-mniToT1wQC.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-MNI152NLin2009cAsym_desc-t1ToMNIQC.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_space-T1w_desc-poseQC_metrics.json",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-orig_to-T1w_mode-image_xfm.mat",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-orig_mode-image_xfm.mat",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsnative_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-T1w_mode-image_xfm.txt",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-L_mode-surface_xfm.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-L_mode-surface_xfm.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsnative_to-fsaverage6_hemi-R_mode-surface_xfm.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-fsnative_hemi-R_mode-surface_xfm.surf.gii",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsaverage6_hemi-L_mode-image+surface_xfm.json",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-T1w_hemi-L_mode-surface+image_xfm.json",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-fsaverage6_hemi-R_mode-image+surface_xfm.json",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-fsaverage6_to-T1w_hemi-R_mode-surface+image_xfm.json",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz",
+     "<ROOT>/BIDS/demo/sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz",
+     "<ROOT>/BIDS/demo/sub-1/ses-2/anat/sub-1_ses-2_T1w.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write Anatomical Publication Manifest",
+    "outputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preprocessAnat_manifest.json"
+    ]
+   },
+   "name": "Write Anatomical Publication Manifest",
+   "resource_class": null
+  }
+ ]
+}

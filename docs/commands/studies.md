@@ -213,7 +213,7 @@ tmaps = query(project="a001", participant="004", module="contrasts",
 | `nro study list [STUDY]` | List studies and analyses on `main`, with scope, last commit, and validity. |
 | `nro study validate [STUDY[/ANALYSIS]] [--worktree]` | Check `study.yml`, manifests, and that `analysis.py` defines the entry function. Code is parsed, not run. |
 | `nro study check STUDY/ANALYSIS [KEY=VALUE ...]` | Plan and print each work item's status, inputs, and output paths. `--worktree` plans from uncommitted files; `--json` prints JSON. |
-| `nro study try STUDY/ANALYSIS [KEY=VALUE ...]` | Run exactly one work item from the working tree into a scratch directory. Nothing is published. |
+| `nro study try STUDY/ANALYSIS [KEY=VALUE ...]` | Run exactly one work item from the working tree into a scratch directory. Nothing is published. `--scratch DIR` chooses the directory; the default is `try/ANALYSIS` below the study's work root. |
 | `nro study run STUDY/ANALYSIS [KEY=VALUE ...]` | Run every ready work item and publish its outputs. `--dry-run` only reports; `--force` reruns fresh items. |
 
 `check`, `try`, and `run` accept `--project` and `--participant`, which can be

@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 
+ALL_TIERS = ("-m", "integration or not integration")
+
 
 @dataclass(frozen=True)
 class TestScope:
@@ -84,13 +86,27 @@ def _matches(path: str, pattern: str) -> bool:
     return "/**/" in pattern and fnmatch.fnmatchcase(path, pattern.replace("/**/", "/"))
 
 
+def _is_test_module(path: str) -> bool:
+    candidate = Path(path)
+    return (
+        candidate.parts[:1] == ("tests",)
+        and candidate.name.startswith("test_")
+        and candidate.suffix == ".py"
+    )
+
+
 def select_tests(
     scopes: Mapping[str, TestScope],
     changed: Iterable[str],
     *,
     requested: Iterable[str] = (),
 ) -> TestSelection:
-    """Resolve changed paths and explicit spheres to a fail-closed test selection."""
+    """Resolve changed paths and explicit spheres to a fail-closed test selection.
+
+    The selection holds each sphere's listed tests and boundaries, followed by
+    any changed test modules. A sphere's other test files run only when they
+    change or in the full suite.
+    """
     changed = tuple(dict.fromkeys(str(Path(path)) for path in changed if str(path).strip()))
     requested = tuple(requested)
     selected = set(requested)
@@ -114,11 +130,17 @@ def select_tests(
                     selected.add(downstream)
                     pending.append(downstream)
     full = bool(unmapped) or any(scopes[name].full for name in selected)
+    changed_tests = (path for path in changed if _is_test_module(path))
     tests = tuple(
         dict.fromkeys(
-            test
-            for name in sorted(selected)
-            for test in (*scopes[name].tests, *scopes[name].boundaries)
+            (
+                *(
+                    test
+                    for name in sorted(selected)
+                    for test in (*scopes[name].tests, *scopes[name].boundaries)
+                ),
+                *changed_tests,
+            )
         )
     )
     return TestSelection(tuple(sorted(selected)), tests, tuple(sorted(unmapped)), full)
@@ -164,7 +186,13 @@ def changed_paths(root: Path) -> tuple[str, ...]:
 
 
 def run_selection(root: Path, selection: TestSelection, *, full: bool = False) -> int:
-    """Run repository formatting, lint, and the selected pytest targets."""
+    """Run repository formatting, lint, and the selected pytest targets.
+
+    Both the unit and integration tiers run, so integration tests named by a
+    sphere are not removed by the default `-m "not integration"` option.
+    Targets whose file no longer exists, such as deleted test modules, are
+    skipped.
+    """
     quality_commands = (
         (sys.executable, "-m", "ruff", "format", "--check", "nro", "tests", "docs/conf.py"),
         (sys.executable, "-m", "ruff", "check", "nro", "tests", "docs/conf.py"),
@@ -174,5 +202,6 @@ def run_selection(root: Path, selection: TestSelection, *, full: bool = False) -
         if result.returncode:
             return result.returncode
     targets = () if full or selection.full else selection.tests
-    command = [sys.executable, "-m", "pytest", *(targets or ("tests",))]
+    targets = tuple(target for target in targets if (root / target.split("::", 1)[0]).exists())
+    command = [sys.executable, "-m", "pytest", *ALL_TIERS, *(targets or ("tests",))]
     return subprocess.run(command, cwd=root, check=False).returncode

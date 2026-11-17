@@ -199,8 +199,7 @@ def test_targeted_resource_worker_runs_only_the_requested_step(
     contract["nodes"] = [node for node in contract["nodes"] if node["id"] == "upstream"]
     (tmp_path / "runner-contract.json").write_text(json.dumps(contract), encoding="utf-8")
 
-    with runner.run_context():
-        states = runner.execute()
+    states = runner.execute_graph()
 
     assert states == {"upstream": NodeState.FRESH, "gpu-step": NodeState.DIRTY}
     assert target.read_text() == "gpu"

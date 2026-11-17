@@ -16,7 +16,6 @@ import random
 import shutil
 import socket
 import sqlite3
-import subprocess
 import threading
 import time
 import uuid
@@ -34,8 +33,10 @@ from nro.definitions.store import (
 from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.engine.io import atomic_write_text
 from nro.engine.terminal import SpinnerLine
-from nro.orchestration import dependency_state
+from nro.orchestration import dependency_state, slurm_jobs
+from nro.orchestration.attempt_files import AttemptFiles
 from nro.orchestration.control_paths import ControlPaths
+from nro.orchestration.local_processes import process_state
 from nro.orchestration.migrations import migrate_database
 from nro.orchestration.recovery_lock import RecoveryLock
 from nro.orchestration.registry_schema import (
@@ -50,7 +51,7 @@ from nro.orchestration.registry_work_items import work_item_relative_directory
 from nro.orchestration.resources import WORK_ITEM_RESOURCE_CLASSES, compatible_work_item_classes
 from nro.orchestration.sql_values import JSON_VALUES, json_values
 from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
-from nro.site.paths import BIDS_PATH, REGISTRY_PATH
+from nro.site import paths as site_paths
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import ExecutionEnvelope, WorkItemSpec
@@ -270,6 +271,45 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+WORKER_LEASE_SECONDS = 120.0
+
+
+def require_request_owner(
+    db: sqlite3.Connection, request_ids: Iterable[str], registry_id: str, *, purpose: str
+) -> None:
+    """Reject requests that the branch with `registry_id` did not admit.
+
+    `purpose` names the operation in the error, for example "Promotion".
+    Raises ValueError for an unknown request or one owned by another branch.
+    """
+    for request_id in request_ids:
+        row = db.execute(
+            "SELECT registry_id FROM request_owners WHERE request_id=?", (request_id,)
+        ).fetchone()
+        if row is None or row[0] != registry_id:
+            raise ValueError(f"{purpose} request belongs to another branch")
+
+
+def renew_worker_lease(
+    db: sqlite3.Connection,
+    worker_id: str,
+    *,
+    state: str,
+    lease_expires_at: float,
+    updated_at: str,
+) -> None:
+    """Extend a worker lease and record its state, keeping a pending shutdown request.
+
+    The caller owns the write transaction.
+    """
+    db.execute(
+        """UPDATE workers
+           SET state=CASE WHEN state='shutdown_requested' THEN state ELSE ? END,
+               lease_expires_at=?, updated_at=? WHERE id=?""",
+        (state, lease_expires_at, updated_at, worker_id),
+    )
+
+
 def discover_registry_projects(bids_root: str | Path) -> list[str]:
     """Return projects represented in the central registry without changing it."""
     registry = Registry.for_project("", bids_root=bids_root)
@@ -351,20 +391,25 @@ class RegistryPaths:
         cls,
         project: str,
         *,
-        bids_root: str | Path = BIDS_PATH,
+        bids_root: str | Path | None = None,
         registry_path: str | Path | None = None,
     ) -> "RegistryPaths":
         """Resolve project and control paths without creating directories.
 
-        An explicit registry_path overrides the site default. A nondefault BIDS
-        root otherwise uses a sibling .nro directory.
+        bids_root defaults to the site BIDS root. An explicit registry_path
+        overrides the site default. A nondefault BIDS root otherwise uses a
+        sibling .nro directory.
         """
-        resolved_bids_root = Path(bids_root).expanduser().resolve()
+        if bids_root is None or registry_path is None:
+            site_bids_root = site_paths.bids_path().expanduser().resolve()
+        resolved_bids_root = (
+            site_bids_root if bids_root is None else Path(bids_root).expanduser().resolve()
+        )
         project_root = resolved_bids_root / project
         if registry_path is None:
             control = (
-                REGISTRY_PATH
-                if resolved_bids_root == Path(BIDS_PATH).expanduser().resolve()
+                site_paths.registry_path()
+                if resolved_bids_root == site_bids_root
                 else resolved_bids_root.parent / ".nro"
             )
         else:
@@ -452,193 +497,6 @@ class RegistryLock:
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return None
 
-    @staticmethod
-    def _slurm_terminal(job_id: str) -> bool | None:
-        """Check whether a job has left Slurm; query failures remain unknown.
-
-        Slurm may report an expired job ID as an error instead of an empty
-        result. Only that specific diagnostic establishes absence on failure.
-        Accounting provides a bounded fallback when the live queue is
-        temporarily unavailable.
-        """
-        if shutil.which("squeue"):
-            try:
-                result = subprocess.run(
-                    ["squeue", "--noheader", "--jobs", str(job_id), "--format", "%T"],
-                    check=False,
-                    text=True,
-                    capture_output=True,
-                    timeout=5,
-                    env={**os.environ, "LC_ALL": "C"},
-                )
-            except (OSError, subprocess.SubprocessError):
-                result = None
-            if result is not None:
-                if not result.returncode:
-                    return not bool(result.stdout.strip())
-                if (
-                    not result.stdout.strip()
-                    and result.stderr.strip() == "slurm_load_jobs error: Invalid job id specified"
-                ):
-                    return True
-        return RegistryLock._slurm_accounting_terminal(job_id)
-
-    @staticmethod
-    def _slurm_accounting_terminal(job_id: str) -> bool | None:
-        """Return terminal state from Slurm accounting when it is conclusive."""
-        if not shutil.which("sacct"):
-            return None
-        try:
-            result = subprocess.run(
-                [
-                    "sacct",
-                    "--jobs",
-                    str(job_id),
-                    "--noheader",
-                    "--parsable2",
-                    "--format",
-                    "JobIDRaw,State",
-                ],
-                check=False,
-                text=True,
-                capture_output=True,
-                timeout=10,
-                env={**os.environ, "LC_ALL": "C"},
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        if result.returncode:
-            return None
-        states = {
-            fields[1].split(maxsplit=1)[0].split("+", 1)[0].upper()
-            for line in result.stdout.splitlines()
-            if len(fields := line.split("|")) >= 2 and fields[0].strip() == str(job_id)
-        }
-        if not states:
-            return None
-        active = {
-            "CONFIGURING",
-            "COMPLETING",
-            "PENDING",
-            "REQUEUED",
-            "REQUEUE_FED",
-            "REQUEUE_HOLD",
-            "RESIZING",
-            "RUNNING",
-            "SIGNALING",
-            "STAGE_OUT",
-            "STOPPED",
-            "SUSPENDED",
-        }
-        terminal = {
-            "BOOT_FAIL",
-            "CANCELLED",
-            "COMPLETED",
-            "DEADLINE",
-            "FAILED",
-            "NODE_FAIL",
-            "OUT_OF_MEMORY",
-            "PREEMPTED",
-            "REVOKED",
-            "SPECIAL_EXIT",
-            "TIMEOUT",
-        }
-        if states <= terminal:
-            return True
-        if states & active:
-            return False
-        return None
-
-    @staticmethod
-    def _slurm_out_of_memory(job_id: str) -> bool | None:
-        if not shutil.which("sacct"):
-            return None
-        try:
-            result = subprocess.run(
-                ["sacct", "--jobs", str(job_id), "--noheader", "--parsable2", "--format", "State"],
-                check=True,
-                text=True,
-                capture_output=True,
-                timeout=20,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        states = [line.split("|", 1)[0].strip().upper() for line in result.stdout.splitlines()]
-        return any(state.startswith("OUT_OF_MEMORY") for state in states)
-
-    @staticmethod
-    def _slurm_timed_out(job_id: str) -> bool | None:
-        """Return whether Slurm accounting identifies a wall-time expiry."""
-        if not shutil.which("sacct"):
-            return None
-        try:
-            result = subprocess.run(
-                ["sacct", "--jobs", str(job_id), "--noheader", "--parsable2", "--format", "State"],
-                check=True,
-                text=True,
-                capture_output=True,
-                timeout=20,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        states = [line.split("|", 1)[0].strip().upper() for line in result.stdout.splitlines()]
-        return any(state.startswith("TIMEOUT") for state in states)
-
-    @staticmethod
-    def _slurm_run_replaced(job_id: str, *, hostname: str, registered_at: str) -> bool | None:
-        """Return whether a requeue replaced the Slurm run that a worker belonged to.
-
-        Slurm keeps the job ID when it requeues a preempted job, so a live job ID
-        does not show that the worker's run is still alive. The worker's run has
-        ended when the job is pending again, runs on other nodes, or started after
-        the worker registered. Query failures and other states remain unknown.
-        """
-        if not shutil.which("squeue"):
-            return None
-        try:
-            result = subprocess.run(
-                ["squeue", "--noheader", "--jobs", str(job_id), "--format", "%T|%S|%N"],
-                check=False,
-                text=True,
-                capture_output=True,
-                timeout=5,
-                env={**os.environ, "LC_ALL": "C"},
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        lines = result.stdout.strip().splitlines()
-        if result.returncode or len(lines) != 1 or lines[0].count("|") != 2:
-            return None
-        state, start, nodes = (field.strip() for field in lines[0].split("|"))
-        if state.upper() == "PENDING":
-            return True
-        if state.upper() != "RUNNING" or not nodes:
-            return None
-        hosts = nodes.split(",")
-        if "[" in nodes:
-            try:
-                expanded = subprocess.run(
-                    ["scontrol", "show", "hostnames", nodes],
-                    check=True,
-                    text=True,
-                    capture_output=True,
-                    timeout=5,
-                )
-            except (OSError, subprocess.SubprocessError):
-                return None
-            hosts = expanded.stdout.split()
-        if hostname.split(".", 1)[0] not in {host.split(".", 1)[0] for host in hosts}:
-            return True
-        try:
-            # squeue reports local time without an offset.
-            run_started = datetime.fromisoformat(start).astimezone(timezone.utc)
-            worker_started = datetime.fromisoformat(registered_at)
-        except (TypeError, ValueError):
-            return None
-        if worker_started.tzinfo is None:
-            worker_started = worker_started.replace(tzinfo=timezone.utc)
-        return run_started > worker_started
-
     def _owner_definitively_dead(self, owner: dict | None) -> bool:
         if owner is None:
             return False
@@ -656,16 +514,14 @@ class RegistryLock:
             return False
         if owner.get("hostname") == socket.gethostname():
             try:
-                os.kill(int(owner["pid"]), 0)
-            except ProcessLookupError:
+                pid = int(owner["pid"])
+            except (KeyError, TypeError, ValueError):
+                pid = None
+            if pid is not None and process_state(pid) == "absent":
                 return True
-            except (KeyError, ValueError, PermissionError, OSError):
-                pass
         job_id = owner.get("slurm_job_id")
         if job_id:
-            return self._slurm_terminal(str(job_id)) is True
-        if owner.get("hostname") != socket.gethostname():
-            return False
+            return slurm_jobs.job_terminal(str(job_id)) is True
         return False
 
     def _renew_lease(self) -> bool:
@@ -795,7 +651,15 @@ class RegistryLock:
                 now = time.monotonic()
                 if now - started >= _WAIT_NOTICE_SECONDS or self._owner_is_old():
                     notice.update(self._wait_message())
-                self._recover_if_safe()
+                if self._recover_if_safe():
+                    # Take a lock that recovery just freed, even if the
+                    # recovery itself used up the remaining wait.
+                    try:
+                        self.path.mkdir(mode=0o2775)
+                        self.path.chmod(0o2775)
+                        break
+                    except FileExistsError:
+                        pass
                 if time.monotonic() >= deadline:
                     raise RegistryLockTimeout(
                         f"Timed out waiting for registry lock {self.path}; owner={self._read_owner()}"
@@ -884,11 +748,17 @@ class Registry(WorkflowRegistry):
         cls,
         project: str,
         *,
-        bids_root: str | Path = BIDS_PATH,
+        bids_root: str | Path | None = None,
         registry_path: str | Path | None = None,
         **kwargs,
     ) -> "Registry":
         """Create a registry handle for a project using the shared control store."""
+        from nro.site.configuration import require_execution_support
+
+        # Reject unsupported installations before resolving site paths.
+        require_execution_support(
+            installation_maintenance=bool(kwargs.get("installation_maintenance", False))
+        )
         return cls(
             RegistryPaths.for_project(
                 project,
@@ -1228,14 +1098,15 @@ class Registry(WorkflowRegistry):
         index; otherwise the replaced state is removed and None is returned.
         """
         self._prepare_directories()
-        scheduler = ControlPaths(self.paths.control).scheduler
+        control = ControlPaths(self.paths.control)
+        scheduler = control.scheduler
         quarantine = scheduler / f".repair-{uuid.uuid4().hex}"
         retained = {
             self.paths.lock,
             self.paths.recovery_lock,
             quarantine,
-            scheduler / "artifact-mutation.lock",
-            scheduler / "artifact-mutation.recovery-lock",
+            control.artifact_mutation_lock,
+            control.artifact_mutation_recovery_lock,
         }
         science = (
             self.paths.events,
@@ -1244,7 +1115,7 @@ class Registry(WorkflowRegistry):
         )
         if preserve_branch_runtime:
             science = ()
-            retained.add(scheduler / "implementation.json")
+            retained.add(control.implementation_record)
         retained.update(scheduler.glob(".repair-*"))
 
         def replaceable():
@@ -1823,7 +1694,7 @@ class Registry(WorkflowRegistry):
         user_name: str | None = None,
         hostname: str | None = None,
         pid: int | None = None,
-        lease_seconds: float = 120.0,
+        lease_seconds: float = WORKER_LEASE_SECONDS,
     ) -> None:
         """Register or refresh a worker lease and its scheduler allocation.
 
@@ -1863,14 +1734,17 @@ class Registry(WorkflowRegistry):
                 ),
             )
 
-    def heartbeat_worker(self, worker_id: str, *, state: str, lease_seconds: float = 120.0) -> None:
+    def heartbeat_worker(
+        self, worker_id: str, *, state: str, lease_seconds: float = WORKER_LEASE_SECONDS
+    ) -> None:
         """Renew a worker lease without clearing an existing shutdown request."""
         with self.connection(write=True) as db:
-            db.execute(
-                """UPDATE workers
-                   SET state=CASE WHEN state='shutdown_requested' THEN state ELSE ? END,
-                       lease_expires_at=?, updated_at=? WHERE id=?""",
-                (state, time.time() + lease_seconds, utcnow(), worker_id),
+            renew_worker_lease(
+                db,
+                worker_id,
+                state=state,
+                lease_expires_at=time.time() + lease_seconds,
+                updated_at=utcnow(),
             )
 
     def worker_checkin(
@@ -1879,15 +1753,16 @@ class Registry(WorkflowRegistry):
         *,
         state: str,
         attempt_id: int | None = None,
-        lease_seconds: float = 120.0,
+        lease_seconds: float = WORKER_LEASE_SECONDS,
     ) -> dict[str, bool]:
         """Renew one worker lease and return its cancellation state."""
         with self.connection(write=True) as db:
-            db.execute(
-                """UPDATE workers
-                   SET state=CASE WHEN state='shutdown_requested' THEN state ELSE ? END,
-                       lease_expires_at=?, updated_at=? WHERE id=?""",
-                (state, time.time() + lease_seconds, utcnow(), worker_id),
+            renew_worker_lease(
+                db,
+                worker_id,
+                state=state,
+                lease_expires_at=time.time() + lease_seconds,
+                updated_at=utcnow(),
             )
             worker = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
             attempt = (
@@ -2224,7 +2099,7 @@ class Registry(WorkflowRegistry):
                     work_item["revision_fingerprint"],
                     memory_gb,
                     now,
-                    str(log_dir / "work-item.log"),
+                    str(AttemptFiles(log_dir).log),
                     now,
                 ),
             )
@@ -2243,10 +2118,10 @@ class Registry(WorkflowRegistry):
             dependency_state.capture_inputs(db, attempt_id, int(work_item["id"]))
             # A work item has one current log, deliberately replaced by the next
             # attempt. Attempt history remains in the registry/events tables.
-            log_path = log_dir / "work-item.log"
+            log_path = AttemptFiles(log_dir).log
             db.execute(
                 "UPDATE workers SET state='running', lease_expires_at=?, updated_at=? WHERE id=?",
-                (time.time() + 120.0, now, worker_id),
+                (time.time() + WORKER_LEASE_SECONDS, now, worker_id),
             )
             work_item["attempt_id"] = attempt_id
             work_item["log_path"] = str(log_path)
@@ -2476,7 +2351,7 @@ class Registry(WorkflowRegistry):
             )
             db.execute(
                 "UPDATE workers SET state='running',lease_expires_at=?,updated_at=? WHERE id=?",
-                (time.time() + 120.0, now, worker_id),
+                (time.time() + WORKER_LEASE_SECONDS, now, worker_id),
             )
             work_item["attempt_id"] = attempt_id
             work_item["log_path"] = str(
@@ -2773,12 +2648,12 @@ class Registry(WorkflowRegistry):
             yield
             return
         self._prepare_directories()
-        scheduler = ControlPaths(self.paths.control).scheduler
+        control = ControlPaths(self.paths.control)
         id_values = json_values(ids)
         token = uuid.uuid4().hex
         with RegistryLock(
-            scheduler / "artifact-mutation.lock",
-            scheduler / "artifact-mutation.recovery-lock",
+            control.artifact_mutation_lock,
+            control.artifact_mutation_recovery_lock,
             lease_seconds=300.0,
         ):
             with self.connection(write=True) as db:
@@ -3564,7 +3439,7 @@ class Registry(WorkflowRegistry):
                     changes.append(("error", int(row["id"])))
             elif (
                 row.get("slurm_job_id")
-                and RegistryLock._slurm_terminal(str(row["slurm_job_id"])) is True
+                and slurm_jobs.job_terminal(str(row["slurm_job_id"])) is True
             ):
                 changes.append(("complete", int(row["id"])))
         if changes:
@@ -3612,9 +3487,7 @@ class Registry(WorkflowRegistry):
                 )
             ]
         detected = [
-            row
-            for row in candidates
-            if RegistryLock._slurm_timed_out(str(row["slurm_job_id"])) is True
+            row for row in candidates if slurm_jobs.timed_out(str(row["slurm_job_id"])) is True
         ]
         timed_out = {int(row["id"]): row for row in (*legacy, *detected)}.values()
         if not timed_out:
@@ -3777,19 +3650,17 @@ class Registry(WorkflowRegistry):
             is_dead = False
             if worker["hostname"] == local_host:
                 try:
-                    os.kill(int(worker["pid"]), 0)
-                except ProcessLookupError:
-                    is_dead = True
-                except (PermissionError, OSError, ValueError):
+                    is_dead = process_state(int(worker["pid"])) == "absent"
+                except (TypeError, ValueError):
                     pass
             replaced = False
             if not is_dead and worker.get("slurm_job_id"):
                 job_id = str(worker["slurm_job_id"])
-                is_dead = RegistryLock._slurm_terminal(job_id) is True
+                is_dead = slurm_jobs.job_terminal(job_id) is True
                 if not is_dead:
                     # A preempted job keeps its ID when Slurm requeues it.
                     replaced = (
-                        RegistryLock._slurm_run_replaced(
+                        slurm_jobs.run_replaced(
                             job_id,
                             hostname=str(worker["hostname"]),
                             registered_at=str(worker["started_at"]),
@@ -3810,7 +3681,7 @@ class Registry(WorkflowRegistry):
 
                 allocation_ended = replaced or (
                     bool(worker.get("slurm_job_id"))
-                    and RegistryLock._slurm_terminal(str(worker["slurm_job_id"])) is True
+                    and slurm_jobs.job_terminal(str(worker["slurm_job_id"])) is True
                 )
                 try:
                     if not allocation_ended and any(
@@ -3829,12 +3700,12 @@ class Registry(WorkflowRegistry):
                 dead.append(worker_id)
                 if (
                     worker.get("slurm_job_id")
-                    and RegistryLock._slurm_out_of_memory(str(worker["slurm_job_id"])) is True
+                    and slurm_jobs.out_of_memory(str(worker["slurm_job_id"])) is True
                 ):
                     oom_workers.add(worker_id)
                 elif (
                     worker.get("slurm_job_id")
-                    and RegistryLock._slurm_timed_out(str(worker["slurm_job_id"])) is True
+                    and slurm_jobs.timed_out(str(worker["slurm_job_id"])) is True
                 ):
                     timed_out_workers.add(worker_id)
         if not dead:

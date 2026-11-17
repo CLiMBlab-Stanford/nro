@@ -58,6 +58,26 @@ class ControlPaths:
         return self.service / "status.json"
 
     @property
+    def service_shutdown(self) -> Path:
+        """Return the record that keeps an intentionally stopped controller down."""
+        return self.service / "shutdown.json"
+
+    @property
+    def implementation_record(self) -> Path:
+        """Return the explicit central installation binding."""
+        return self.scheduler / "implementation.json"
+
+    @property
+    def artifact_mutation_lock(self) -> Path:
+        """Return the lock that serializes changes to published artifacts."""
+        return self.scheduler / "artifact-mutation.lock"
+
+    @property
+    def artifact_mutation_recovery_lock(self) -> Path:
+        """Return the recovery lock paired with `artifact_mutation_lock`."""
+        return self.scheduler / "artifact-mutation.recovery-lock"
+
+    @property
     def catalog(self) -> Path:
         """Return the shared branch catalog."""
         return self.shared / "branches.json"
@@ -66,6 +86,10 @@ class ControlPaths:
     def ingestion(self) -> Path:
         """Return site-wide ingestion state and publication receipts."""
         return self.shared / "ingestion"
+
+    def ingestion_for(self, branch: str) -> Path:
+        """Return ingestion state for one branch; `main` uses the site-wide directory."""
+        return self.ingestion if branch == "main" else self.branch(branch) / "ingestion"
 
     @property
     def cache(self) -> Path:
@@ -91,6 +115,26 @@ class ControlPaths:
     def maintenance_preparations(self) -> Path:
         """Return retained migration and project-rename preparations."""
         return self.shared / "maintenance-preparations"
+
+    @property
+    def maintenance_transactions(self) -> Path:
+        """Return backups kept by shared scheduler repair."""
+        return self.shared / "maintenance"
+
+    @property
+    def project_renames(self) -> Path:
+        """Return project-rename journals."""
+        return self.shared / "project-renames"
+
+    @property
+    def provenance_migrations(self) -> Path:
+        """Return provenance-migration journals."""
+        return self.shared / "provenance-migrations"
+
+    @property
+    def freshening(self) -> Path:
+        """Return freshening journals."""
+        return self.shared / "freshening"
 
     def branch(self, name: str) -> Path:
         """Return private state for a validated, collision-free branch ID."""

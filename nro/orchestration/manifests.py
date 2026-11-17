@@ -215,7 +215,7 @@ def preview_registry(
                     else:
                         try:
                             recovered, reason = _public_derivative_completion(
-                                row, registry, compiled=compiled
+                                row, compiled=compiled
                             )
                         except _PublicDerivativeCorruption as error:
                             state = ("corrupt", str(error))
@@ -296,7 +296,7 @@ def _read_yaml_mapping(path: Path) -> dict | None:
 
 
 def _public_derivative_completion(
-    row: dict, registry: Registry, *, compiled: bool = False
+    row: dict, *, compiled: bool = False
 ) -> tuple[_PublicDerivativeCompletion | None, str]:
     """Validate the work item's fixed public derivative contract.
 
@@ -834,7 +834,7 @@ def evaluate_assessment(
                     public_corruption = False
                     try:
                         recovered, recovery_error = _public_derivative_completion(
-                            row, registry, compiled=registered_only
+                            row, compiled=registered_only
                         )
                     except _PublicDerivativeCorruption as error:
                         recovered, recovery_error = None, str(error)
@@ -1028,7 +1028,7 @@ def evaluate_assessment(
                 else:
                     try:
                         recovered, _recovery_error = _public_derivative_completion(
-                            row, registry, compiled=registered_only
+                            row, compiled=registered_only
                         )
                     except _PublicDerivativeContractMismatch:
                         recovered = None

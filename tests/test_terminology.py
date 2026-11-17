@@ -25,7 +25,7 @@ from nro.orchestration.contracts import (
 )
 from nro.orchestration.registry import Registry
 from nro.site import configuration as site
-from nro.site.paths import REGISTRY_PATH
+from nro.site.paths import registry_path
 
 ROOT = Path(__file__).parents[1]
 
@@ -175,9 +175,9 @@ def test_default_registry_is_lab_wide(monkeypatch) -> None:
 
     monkeypatch.setattr(ControlPaths, "require_current_layout", lambda self: None)
     registry = Registry.for_project("nptl")
-    assert registry.paths.control == REGISTRY_PATH
-    assert Path(site.DEFAULTS["registry"]) == Path("/juice6/u/nlp/climblab/.nro")
-    assert registry.paths.database == REGISTRY_PATH / "shared/scheduler/registry.sqlite3"
+    assert registry.paths.control == registry_path()
+    assert Path(site.DEFAULTS["registry"]) == site.LAB / ".nro"
+    assert registry.paths.database == registry_path() / "shared/scheduler/registry.sqlite3"
 
 
 def test_workflow_api_exposes_configurations_by_class() -> None:

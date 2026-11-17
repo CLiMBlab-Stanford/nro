@@ -10,6 +10,7 @@ from nro.definitions.runtime import configure
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
+from nro.modules.anat import construction as anat_construction
 from nro.modules.anat import module as anat
 from nro.modules.anat.inputs import AnatImage
 from nro.orchestration.branches import BranchPaths
@@ -142,7 +143,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         lambda **kwargs: {"FS_LICENSE": str(license_file)},
     )
     monkeypatch.setattr(
-        anat,
+        anat_construction,
         "find_fsaverage_template_surface",
         lambda **kwargs: tmp_path / f"{kwargs['hemi']}.sphere.surf.gii",
     )
@@ -266,7 +267,7 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
         lambda **kwargs: {"FS_LICENSE": str(license_file)},
     )
     monkeypatch.setattr(
-        anat,
+        anat_construction,
         "find_fsaverage_template_surface",
         lambda **kwargs: tmp_path / f"{kwargs['hemi']}.sphere.surf.gii",
     )
@@ -351,3 +352,93 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     assert any(
         path.name.endswith("desc-synthsr_T1w.nii.gz") for path in fastsurfer_segmentation.inputs
     )
+
+
+GOLDEN_ANATOMICAL_CASES = {
+    "t1w": dict(modalities=("T1w",)),
+    "t2w": dict(modalities=("T2w",)),
+    "t1w_t2w_sessions": dict(modalities=("T1w", "T2w")),
+    "t1w_fastsurfer": dict(modalities=("T1w",), surface_reconstruction_engine="fastsurfer"),
+    "lesion_freesurfer": dict(modalities=("T1w",), lesion=True),
+    "lesion_fastsurfer": dict(
+        modalities=("T1w",), lesion=True, surface_reconstruction_engine="fastsurfer"
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(GOLDEN_ANATOMICAL_CASES))
+def test_anatomical_graph_matches_golden_contract(context, tmp_path, monkeypatch, case):
+    from graph_golden import assert_matches_golden, record_graph
+
+    settings = dict(GOLDEN_ANATOMICAL_CASES[case])
+    modalities = settings.pop("modalities")
+    lesion = settings.pop("lesion", False)
+    images = []
+    for session in ("ses-1", "ses-2"):
+        for modality in modalities:
+            if len(modalities) == 2 and (session == "ses-1") == (modality == "T2w"):
+                continue
+            if lesion and session == "ses-2":
+                continue
+            source = (
+                context.paths.source_project("demo")
+                / f"sub-1/{session}/anat/sub-1_{session}_{modality}.nii.gz"
+            )
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(b"source")
+            images.append(AnatImage(source, None, modality, session, {}, "series", 1.0))
+    template = tmp_path / "template.nii.gz"
+    template.write_bytes(b"template")
+    image = tmp_path / "image.sif"
+    image.write_bytes(b"image")
+    masker = tmp_path / "synthstroke"
+    masker.write_bytes(b"command")
+    license_file = tmp_path / "license.txt"
+    license_file.write_text("license")
+    monkeypatch.setattr(
+        anat, "neuroimaging_environment", lambda **kwargs: {"FS_LICENSE": str(license_file)}
+    )
+    monkeypatch.setattr(
+        anat_construction,
+        "find_fsaverage_template_surface",
+        lambda **kwargs: tmp_path / f"{kwargs['hemi']}.sphere.surf.gii",
+    )
+    base = context.paths.source_project("demo") / "derivatives/nro/anat/main"
+    lesion_options = (
+        dict(lesion=True, lesion_masker_command=masker, fastsurfer_image=image) if lesion else {}
+    )
+    options = anat.Options(
+        "demo",
+        "main",
+        base / "sub-1/anat",
+        context.paths.work / "demo/derivatives/nro/anat/main/sub-1",
+        base / "code/freesurfer",
+        "sub-1",
+        "fsaverage6",
+        "first" if lesion else "average",
+        "off",
+        tmp_path / "gradient.sif",
+        "singularity",
+        template,
+        ContainerSpec(image=image, engine="true"),
+        image,
+        False,
+        "freesurfer",
+        freesurfer_image=image,
+        **lesion_options,
+    )
+    if "surface_reconstruction_engine" in settings:
+        options = replace(options, fastsurfer_image=image, **settings)
+    inputs = anat.Inputs(
+        "sub-1",
+        tuple(i for i in images if i.modality == "T1w"),
+        tuple(i for i in images if i.modality == "T2w"),
+    )
+
+    record = record_graph(
+        lambda: anat.build_module(inputs, options, execution_context=context),
+        tmp_path,
+        monkeypatch,
+    )
+
+    assert_matches_golden(f"anat_{case}", record)

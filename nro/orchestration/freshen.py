@@ -82,7 +82,7 @@ def _topological(ids: set[int], dependencies: tuple[dict, ...]) -> tuple[int, ..
 
 
 def _journal_root(registry) -> Path:
-    return ControlPaths(registry.paths.control).shared / "freshening"
+    return ControlPaths(registry.paths.control).freshening
 
 
 def _remove_journal(path: Path) -> None:

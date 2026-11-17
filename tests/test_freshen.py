@@ -178,7 +178,11 @@ def test_preview_accepts_only_unchanged_stale_descendants(monkeypatch, tmp_path:
         (2, "freshen"),
     ]
 
+    recorded = child_output.stat().st_mtime_ns
     child_output.write_text("evil")
+    # Same size; move the timestamp explicitly because two writes can share
+    # one filesystem timestamp tick.
+    os.utime(child_output, ns=(recorded + 1_000_000_000, recorded + 1_000_000_000))
     changed = freshen.preview(
         SimpleNamespace(paths=SimpleNamespace(control=tmp_path / ".nro")),
         checkout=tmp_path,

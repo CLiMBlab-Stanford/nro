@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import abc
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Mapping
+from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Mapping
 
 import yaml
 
@@ -27,7 +29,7 @@ from nro.engine.references import (
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.dependencies import primary_dependency
 from nro.orchestration.planning_context import work_item_key
-from nro.orchestration.sql_values import JSON_VALUES, json_values
+from nro.orchestration.sql_values import JSON_VALUES, chunks, json_values
 from nro.orchestration.workflow_registry import (
     lineage_directory_label,
     unbound_lineage_fingerprint,
@@ -81,35 +83,45 @@ def _portable_configuration_values(value: object, roots: ReferenceRoots) -> obje
 
 def _resolve_configuration_values(value: object) -> object:
     """Expand site-setting references for local execution and recovery."""
-    if isinstance(value, Mapping):
-        if set(value) == {_CONTAINER_RESOURCE}:
-            identity = value[_CONTAINER_RESOURCE]
-            if not isinstance(identity, Mapping) or set(identity) != {"name", "version"}:
-                raise ValueError("Invalid portable container identity")
-            name = str(identity["name"])
-            version = str(identity["version"])
-            from nro.site.configuration import CONTAINER_VERSIONS, settings
+    current: dict | None = None
 
-            if CONTAINER_VERSIONS.get(name) != version:
-                raise ValueError(f"Unsupported container identity {name!r} version {version!r}")
-            current = settings()[0]
-            if name not in current:
-                raise ValueError(f"Container resource {name!r} is not configured")
-            return str(current[name])
-        if set(value) == {_SITE_SETTING}:
-            name = value[_SITE_SETTING]
-            if name not in {"binds", "runtime"}:
-                raise ValueError(f"Unknown portable site setting {name!r}")
+    def site_values() -> dict:
+        nonlocal current
+        if current is None:
             from nro.site.configuration import settings
 
             current = settings()[0]
-            if name == "binds":
-                return list(current.get("binds", ()))
-            return str(current["runtime"])
-        return {key: _resolve_configuration_values(member) for key, member in value.items()}
-    if isinstance(value, list):
-        return [_resolve_configuration_values(member) for member in value]
-    return value
+        return current
+
+    def resolve(item: object) -> object:
+        # Records come from JSON, so abc checks match; typing aliases are slow.
+        if isinstance(item, abc.Mapping):
+            if len(item) == 1 and _CONTAINER_RESOURCE in item:
+                identity = item[_CONTAINER_RESOURCE]
+                if not isinstance(identity, abc.Mapping) or set(identity) != {"name", "version"}:
+                    raise ValueError("Invalid portable container identity")
+                name = str(identity["name"])
+                version = str(identity["version"])
+                from nro.site.configuration import CONTAINER_VERSIONS
+
+                if CONTAINER_VERSIONS.get(name) != version:
+                    raise ValueError(f"Unsupported container identity {name!r} version {version!r}")
+                if name not in site_values():
+                    raise ValueError(f"Container resource {name!r} is not configured")
+                return str(site_values()[name])
+            if len(item) == 1 and _SITE_SETTING in item:
+                name = item[_SITE_SETTING]
+                if name not in {"binds", "runtime"}:
+                    raise ValueError(f"Unknown portable site setting {name!r}")
+                if name == "binds":
+                    return list(site_values().get("binds", ()))
+                return str(site_values()["runtime"])
+            return {key: resolve(member) for key, member in item.items()}
+        if isinstance(item, list):
+            return [resolve(member) for member in item]
+        return item
+
+    return resolve(value)
 
 
 def _reference_roots(
@@ -558,8 +570,7 @@ def missing_work_item_ownership(
         return ()
     rows = []
     with registry.connection() as db:
-        for offset in range(0, len(selected), 500):
-            batch = selected[offset : offset + 500]
+        for batch in chunks(selected):
             rows.extend(
                 dict(row)
                 for row in db.execute(
@@ -607,6 +618,20 @@ def missing_work_item_ownership(
     return tuple(missing)
 
 
+# Work-item record files are small, so reading them is bound by shared
+# filesystem latency. A few threads overlap those round trips.
+OWNERSHIP_READ_THREADS = 16
+OWNERSHIP_READ_CHUNK = 512
+
+
+def _read_record_text(path: Path) -> str | OSError:
+    """Return one record file's text, or the error that prevented reading it."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as error:
+        return error
+
+
 @with_site_read_cache
 def read_ownership_records(
     bids_root: Path,
@@ -614,24 +639,38 @@ def read_ownership_records(
     *,
     source_bids_root: Path | None = None,
     studies_root: Path | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[dict], list[tuple[dict, Path]], list[str]]:
     """Read and resolve ownership records from the selected derivative trees.
 
     ``studies_root`` also reads study-analysis records below
     ``STUDY/analyses/NAME/project-P``. Site settings are read once for the
     whole scan, not once per record.
+
+    Record files are read concurrently, because on a shared filesystem each
+    small file costs several network round trips. Records are still validated
+    one at a time, in sorted order. ``progress`` receives the number of work-item
+    records handled so far and the total, once after each record.
     """
     lineages: dict[tuple[str, str], dict] = {}
     ambiguous: set[tuple[str, str]] = set()
     work_items: list[tuple[dict, Path]] = []
     errors: list[str] = []
 
-    def read_lineage(marker_path: Path, configuration_class: str, project: str, roots) -> None:
+    def read_lineage(
+        marker_path: Path,
+        configuration_class: str,
+        project: str,
+        roots,
+        receipts: Iterable[tuple[Path, str | OSError]],
+    ) -> None:
         try:
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
             marker = _validate_lineage_record(marker, marker_path, configuration_class, roots=roots)
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
             errors.append(f"{marker_path}: {error}")
+            for _receipt in receipts:
+                advance()
             return
         identity = (configuration_class, str(marker["lineage_fingerprint"]))
         previous = lineages.get(identity)
@@ -649,10 +688,11 @@ def read_ownership_records(
             previous is None or str(marker["updated_at"]) > str(previous["updated_at"])
         ):
             lineages[identity] = marker
-        work_item_root = marker_path.parent / "work_items"
-        for receipt_path in sorted(work_item_root.glob("*/*.json")):
+        for receipt_path, text in receipts:
             try:
-                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                if isinstance(text, OSError):
+                    raise text
+                receipt = json.loads(text)
                 receipt = _validate_work_item_record(
                     receipt,
                     receipt_path,
@@ -664,8 +704,11 @@ def read_ownership_records(
             except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
                 errors.append(f"{receipt_path}: {error}")
                 continue
+            finally:
+                advance()
             work_items.append((receipt, receipt_path))
 
+    targets: list[tuple[Path, str, str, object]] = []
     for project in projects:
         project_root = Path(bids_root) / project
         source_project_root = Path(source_bids_root or bids_root) / project
@@ -675,14 +718,38 @@ def read_ownership_records(
             for marker_path in sorted(
                 class_root.glob(f"*/{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}")
             ):
-                read_lineage(marker_path, configuration_class, project, roots)
+                targets.append((marker_path, configuration_class, project, roots))
         if studies_root is not None:
             for marker_path in sorted(
                 Path(studies_root).glob(
                     f"*/analyses/*/project-{project}/{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}"
                 )
             ):
-                read_lineage(marker_path, ANALYSES_CLASS, project, roots)
+                targets.append((marker_path, ANALYSES_CLASS, project, roots))
+    receipt_paths = [
+        sorted((marker_path.parent / "work_items").glob("*/*.json"))
+        for marker_path, *_rest in targets
+    ]
+    total = sum(len(paths) for paths in receipt_paths)
+    handled = 0
+
+    def advance() -> None:
+        nonlocal handled
+        handled += 1
+        if progress is not None:
+            progress(handled, total)
+
+    with ThreadPoolExecutor(
+        max_workers=OWNERSHIP_READ_THREADS, thread_name_prefix="nro-ownership-read"
+    ) as pool:
+
+        def receipts(paths: list[Path]) -> Iterator[tuple[Path, str | OSError]]:
+            for start in range(0, len(paths), OWNERSHIP_READ_CHUNK):
+                chunk = paths[start : start + OWNERSHIP_READ_CHUNK]
+                yield from zip(chunk, pool.map(_read_record_text, chunk))
+
+        for target, paths in zip(targets, receipt_paths, strict=True):
+            read_lineage(*target, receipts(paths))
     work_items, chained = _without_chained_analyses(work_items)
     errors.extend(chained)
     return list(lineages.values()), work_items, errors

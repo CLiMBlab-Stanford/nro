@@ -891,7 +891,7 @@ def test_first_install_does_not_overwrite_unrecognized_partial_store(isolated_si
 def test_interactive_generic_defaults_preserve_explicit_paths(
     isolated_site, tmp_path, monkeypatch, shared
 ):
-    monkeypatch.setattr(site_setup, "LAB", tmp_path / "absent-lab")
+    monkeypatch.setattr(site_setup.site_config, "LAB", tmp_path / "absent-lab")
     monkeypatch.setattr(site, "LAB", tmp_path / "absent-lab")
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setattr(
@@ -908,7 +908,7 @@ def test_interactive_generic_defaults_preserve_explicit_paths(
 
 
 def test_interactive_defaults_keep_reachable_lab(isolated_site, tmp_path, monkeypatch):
-    monkeypatch.setattr(site_setup, "LAB", tmp_path)
+    monkeypatch.setattr(site_setup.site_config, "LAB", tmp_path)
     monkeypatch.setattr(site, "LAB", tmp_path)
     monkeypatch.setitem(site.DEFAULTS, "definitions", str(tmp_path / "absent-definitions"))
     _, sources = site.settings()
@@ -931,7 +931,7 @@ def test_explicit_default_parent_rebases_site_paths(isolated_site, tmp_path, mon
     assert "partition" not in values
     assert "binds" not in values
 
-    monkeypatch.setattr(site_setup, "LAB", tmp_path)
+    monkeypatch.setattr(site_setup.site_config, "LAB", tmp_path)
     proposals = site_setup.interactive_defaults({}, default_parent_dir=parent)
     assert proposals == values
 
@@ -940,7 +940,7 @@ def test_explicit_default_parent_rebases_site_paths(isolated_site, tmp_path, mon
 def test_interactive_paths_display_and_save_proposals(
     isolated_site, tmp_path, monkeypatch, capsys, accept_all
 ):
-    monkeypatch.setattr(site_setup, "LAB", tmp_path / "absent-lab")
+    monkeypatch.setattr(site_setup.site_config, "LAB", tmp_path / "absent-lab")
     monkeypatch.setattr(site, "LAB", tmp_path / "absent-lab")
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setattr(site_setup, "installation_record", lambda: {})

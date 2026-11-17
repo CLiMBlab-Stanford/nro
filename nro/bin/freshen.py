@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
+from nro.engine.cli import add_core_selection_arguments, confirm, core_selection, page_text
 from nro.orchestration.catalog import MODULES
 from nro.orchestration.scheduler_client import maintenance
 from nro.site.configuration import CHECKOUT, settings
@@ -62,13 +62,6 @@ def _render(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _confirm() -> bool:
-    try:
-        return input("Proceed with freshening? [y/N] ").strip().lower() in {"y", "yes"}
-    except (EOFError, KeyboardInterrupt):
-        return False
-
-
 def main(argv: list[str] | None = None, *, prog: str = "nro freshen") -> None:
     """Preview and re-attest matching unchanged derivatives."""
     args = build_parser(prog=prog).parse_args(argv)
@@ -97,7 +90,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro freshen") -> None:
             print(_render(report), end="")
         else:
             page_text(_render(report))
-            if not _confirm():
+            if not confirm("Proceed with freshening?"):
                 print("Freshen cancelled.")
                 return
     result = maintenance(

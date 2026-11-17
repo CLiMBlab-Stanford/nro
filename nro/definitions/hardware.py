@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from nro.definitions.parsing import parse_mapping
+from nro.engine.io import file_sha256
 from nro.site.configuration import resolve_definition, settings
 
 CATALOG_RELATIVE_PATH = Path("hardware/gradient_unwarping.yml")
@@ -48,14 +48,6 @@ class GradientUnwarpingResolution:
             "method": GRADIENT_UNWARP_METHOD if self.applied else None,
             "tool_image": GRADIENT_UNWARP_IMAGE if self.applied else None,
         }
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _load_catalog(root: Path | tuple[Path, ...] | None = None) -> tuple[Path, dict[str, Any]]:
@@ -380,6 +372,6 @@ def resolve_gradient_unwarping(
         action=action,
         matched_metadata=matched,
         coefficients=coefficients,
-        coefficient_sha256=_sha256(coefficients),
+        coefficient_sha256=file_sha256(coefficients),
         override_existing_correction=override,
     )

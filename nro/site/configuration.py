@@ -110,21 +110,6 @@ ENVIRONMENT_KEYS = {
     "TEMPLATEFLOW_HOME": "templates",
     "FS_LICENSE": "license",
 }
-DERIVED = {
-    "qunex": ("images", "qunex_suite-1.5.1.sif"),
-    "synthstrip": ("images", "synthstrip_1.7.sif"),
-    "synbold": ("images", "synbold-disco_v1.4.sif"),
-    "gradient_unwarp": ("images", "hcp-base_1.0.3_4.3.0.sif"),
-    "freesurfer": ("images", "freesurfer_7.4.1.sif"),
-    "fastsurfer": ("images", "fastsurfer-cu118_2.5.4.sif"),
-    "workbench_image": ("images", "nro-workbench_2.2.1-14.sif"),
-    "fastsurfer_data": ("images", "fastsurfer-lit-0.6.1"),
-    "synthstroke_data": ("images", "synthstroke-synth-plus-e9774354"),
-    "mni_template": (
-        "templates",
-        "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz",
-    ),
-}
 CONTAINER_VERSIONS = {
     "qunex": "1.5.1",
     "synthstrip": "1.7",
@@ -133,6 +118,21 @@ CONTAINER_VERSIONS = {
     "freesurfer": "7.4.1",
     "fastsurfer": "2.5.4",
     "workbench_image": "2.2.1-14",
+}
+DERIVED = {
+    "qunex": ("images", f"qunex_suite-{CONTAINER_VERSIONS['qunex']}.sif"),
+    "synthstrip": ("images", f"synthstrip_{CONTAINER_VERSIONS['synthstrip']}.sif"),
+    "synbold": ("images", f"synbold-disco_v{CONTAINER_VERSIONS['synbold']}.sif"),
+    "gradient_unwarp": ("images", f"hcp-base_{CONTAINER_VERSIONS['gradient_unwarp']}.sif"),
+    "freesurfer": ("images", f"freesurfer_{CONTAINER_VERSIONS['freesurfer']}.sif"),
+    "fastsurfer": ("images", f"fastsurfer-cu118_{CONTAINER_VERSIONS['fastsurfer']}.sif"),
+    "workbench_image": ("images", f"nro-workbench_{CONTAINER_VERSIONS['workbench_image']}.sif"),
+    "fastsurfer_data": ("images", "fastsurfer-lit-0.6.1"),
+    "synthstroke_data": ("images", "synthstroke-synth-plus-e9774354"),
+    "mni_template": (
+        "templates",
+        "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz",
+    ),
 }
 PATH_KEYS = {
     "definitions",
@@ -160,16 +160,7 @@ SITE_SECTIONS = {
         "workbench",
         "oslom",
         "license",
-        "qunex",
-        "synthstrip",
-        "synbold",
-        "gradient_unwarp",
-        "freesurfer",
-        "fastsurfer",
-        "workbench_image",
-        "fastsurfer_data",
-        "synthstroke_data",
-        "mni_template",
+        *DERIVED,
     ),
     "execution": (
         "runtime",
@@ -253,8 +244,12 @@ def default_parent_paths(parent: Path) -> dict[str, str]:
     return {key: str(values[key]) for key in PATH_KEYS if key in values}
 
 
-def installation_record(root: Path = CHECKOUT) -> dict:
-    """Read the checkout role record without creating it; reject records from another checkout."""
+def installation_record(root: Path | None = None) -> dict:
+    """Read the checkout role record without creating it; reject records from another checkout.
+
+    root defaults to the current value of `CHECKOUT`.
+    """
+    root = CHECKOUT if root is None else root
     path = root / RECORD_NAME
     if not path.exists():
         return {}
@@ -323,7 +318,7 @@ def read_overrides(path: Path) -> dict:
     return values
 
 
-def _definitions_from_locator(path: Path, overrides: dict) -> Path:
+def _definitions_from_locator(overrides: dict) -> Path:
     """Resolve the authoritative definitions root without reading its contents."""
     value = overrides.get("definitions", DEFAULTS["definitions"])
     if not LAB.is_dir() or not os.access(LAB, os.R_OK | os.X_OK):
@@ -535,7 +530,7 @@ def protected_site(definitions: Path | None = None) -> tuple[dict, dict]:
     if definitions is None:
         path = site_file()
         overrides = read_overrides(path)
-        definitions = _definitions_from_locator(path, overrides)
+        definitions = _definitions_from_locator(overrides)
     return read_site_definition(Path(definitions))
 
 
@@ -640,7 +635,7 @@ def settings(*, path: Path | None = None) -> tuple[dict, dict]:
     overrides = read_overrides(path)
     locator_only = set(overrides) <= {"definitions"}
     if locator_only:
-        definitions = _definitions_from_locator(path, overrides)
+        definitions = _definitions_from_locator(overrides)
         values["definitions"] = str(definitions)
         sources["definitions"] = str(path) if "definitions" in overrides else sources["definitions"]
         protected_path = site_definition_path(definitions)

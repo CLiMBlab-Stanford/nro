@@ -41,7 +41,11 @@ def split_analysis_name(value: str) -> tuple[str, str]:
     return check_study_name(study), analysis
 
 
-def _git(repository: Path, *arguments: str, text: bool = True) -> str | bytes:
+def run_git(repository: Path, *arguments: str, text: bool = True) -> str | bytes:
+    """Run a Git command in `repository` and return its standard output.
+
+    Raises StudyError with Git's error output when the command fails.
+    """
     result = subprocess.run(
         ("git", "-C", str(repository), *arguments),
         capture_output=True,
@@ -74,7 +78,7 @@ class StudySource:
             raise StudyError(f"No study repository at {repository}; run nro study init {study}")
         if ref is None:
             return cls(study, repository, WORKTREE)
-        commit = str(_git(repository, "rev-parse", "--verify", f"{ref}^{{commit}}")).strip()
+        commit = str(run_git(repository, "rev-parse", "--verify", f"{ref}^{{commit}}")).strip()
         return cls(study, repository, commit)
 
     @property
@@ -102,7 +106,9 @@ class StudySource:
             names = [path.parent.name for path in root.glob("*/analysis.yml")]
         else:
             listing = str(
-                _git(self.repository, "ls-tree", "-r", "--name-only", self.commit, "--", "analyses")
+                run_git(
+                    self.repository, "ls-tree", "-r", "--name-only", self.commit, "--", "analyses"
+                )
             )
             names = [
                 parts[1]
@@ -142,7 +148,7 @@ class StudySource:
         with tempfile.TemporaryDirectory(dir=destination.parent) as staging:
             archive = Path(staging) / "code.tar"
             archive.write_bytes(
-                _git(self.repository, "archive", "--format=tar", self.commit, text=False)
+                run_git(self.repository, "archive", "--format=tar", self.commit, text=False)
             )
             extracted = Path(staging) / "code"
             extracted.mkdir()
@@ -161,7 +167,7 @@ class StudySource:
         if self.is_worktree:
             return None
         value = str(
-            _git(self.repository, "log", "-1", "--format=%h %cs", self.commit, "--", relative)
+            run_git(self.repository, "log", "-1", "--format=%h %cs", self.commit, "--", relative)
         ).strip()
         return value or None
 

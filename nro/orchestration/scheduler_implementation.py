@@ -92,7 +92,7 @@ def bound_site_values(control: Path) -> dict:
 
 def implementation_path(control: Path) -> Path:
     """Locate the explicit central installation binding, not a code archive."""
-    return ControlPaths(control).scheduler / "implementation.json"
+    return ControlPaths(control).implementation_record
 
 
 def activate(

@@ -19,8 +19,8 @@ from pathlib import Path
 
 import yaml
 
-from nro.engine.io import atomic_write_json
 from nro.engine.references import resolve_public_payload
+from nro.orchestration.attempt_files import AttemptFiles, record_step
 from nro.orchestration.completion import record_completion
 from nro.orchestration.contracts import ExecutionEnvelope
 from nro.orchestration.control_paths import ControlPaths
@@ -43,13 +43,13 @@ from nro.orchestration.scheduler_client import SchedulerError
 from nro.orchestration.scheduler_implementation import validate_worker_script
 from nro.orchestration.service_relief import await_service_relief
 from nro.orchestration.sql_values import JSON_VALUES, json_values
-from nro.site.paths import BIDS_PATH
+from nro.site.paths import bids_path
 
 COMPATIBLE = WORKER_COMPATIBILITY
 RUNNING_CHECKIN_INTERVAL = 10.0
 
 
-def _append_event(registry: Registry, work_item: ExecutionEnvelope, event: dict) -> None:
+def _append_event(work_item: ExecutionEnvelope, event: dict) -> None:
     path = work_item.log_path.parent / "events.jsonl"
     ensure_shared_directory(path.parent)
     record = {
@@ -75,38 +75,24 @@ def _update_orchestration_step(
     error: str | None = None,
 ) -> None:
     """Track coordinator-owned completion validation in the shared step ledger."""
-    path = log_path.parent / "current-steps.json"
+    path = AttemptFiles.for_log(log_path).current_steps
     ensure_shared_directory(path.parent)
-    key = "orchestration:completion"
-    try:
-        current = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-        if not isinstance(current, dict):
-            current = {}
-    except (OSError, json.JSONDecodeError):
-        current = {}
-    record = {
-        "step_id": key,
-        "name": "Completion Validation and Provenance",
-        "status": status,
-        "timestamp": utcnow(),
-        "outputs": [],
-        "command": None,
-        "cwd": os.getcwd(),
-        "reason": "Validate and fingerprint work-item outputs after module completion.",
-        "elapsed_seconds": time.monotonic() - started_at,
-        "error": error,
-    }
-    current[key] = record
-    atomic_write_json(path, current, sort_keys=True, mode=0o664)
-    events = path.with_name("step-events.jsonl")
-    with events.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(record, sort_keys=True) + "\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-    try:
-        events.chmod(0o664)
-    except PermissionError:
-        pass
+    record_step(
+        path,
+        {
+            "step_id": "orchestration:completion",
+            "name": "Completion Validation and Provenance",
+            "status": status,
+            "timestamp": utcnow(),
+            "outputs": [],
+            "command": None,
+            "cwd": os.getcwd(),
+            "reason": "Validate and fingerprint work-item outputs after module completion.",
+            "elapsed_seconds": time.monotonic() - started_at,
+            "error": error,
+        },
+        durable=True,
+    )
 
 
 def _outputs(work_item: ExecutionEnvelope) -> tuple[Path, ...]:
@@ -597,7 +583,8 @@ class Worker:
         command = work_item.execution.command
         log_path = work_item.log_path
         ensure_shared_directory(log_path.parent)
-        step_ledger = log_path.parent / "current-steps.json"
+        attempt_files = AttemptFiles.for_log(log_path)
+        step_ledger = attempt_files.current_steps
         handoff_path = log_path.parent / f"resource-handoff-{attempt_id}.json"
         handoff_path.unlink(missing_ok=True)
         resource_task_id = work_item.resource_task_id
@@ -630,8 +617,8 @@ class Worker:
         # into the new database completion record's private-artifact inventory.
         for current_attempt_file in (
             step_ledger,
-            log_path.parent / "step-events.jsonl",
-            log_path.parent / "runner-graph.json",
+            attempt_files.step_events,
+            attempt_files.runner_graph,
         ):
             current_attempt_file.unlink(missing_ok=True)
         cancelled = False
@@ -641,7 +628,6 @@ class Worker:
             self.registry, work_item.work_item_id
         )
         _append_event(
-            self.registry,
             work_item,
             {
                 "event": "attempt_started",
@@ -785,7 +771,6 @@ class Worker:
                         memory_gb=32,
                     )
                     _append_event(
-                        self.registry,
                         work_item,
                         {
                             "event": "attempt_resource_handoff",
@@ -813,7 +798,6 @@ class Worker:
                     error_message=message,
                 )
                 _append_event(
-                    self.registry,
                     work_item,
                     {
                         "event": "worker_allocation_expired",
@@ -839,7 +823,6 @@ class Worker:
                     else "Worker terminated while a work item was running",
                 )
                 _append_event(
-                    self.registry,
                     work_item,
                     {"event": "attempt_cancelled", "attempt_id": attempt_id},
                 )
@@ -854,7 +837,6 @@ class Worker:
                         next_memory = self.registry.record_oom(attempt_id, message=message)
                     self._cancel_failed_descendants(work_item)
                     _append_event(
-                        self.registry,
                         work_item,
                         {
                             "event": "attempt_oom",
@@ -874,7 +856,6 @@ class Worker:
                 )
                 self._cancel_failed_descendants(work_item)
                 _append_event(
-                    self.registry,
                     work_item,
                     {
                         "event": "attempt_failed",
@@ -898,7 +879,6 @@ class Worker:
                     error_message=message,
                 )
                 _append_event(
-                    self.registry,
                     work_item,
                     {
                         "event": "attempt_graph_changed",
@@ -910,7 +890,6 @@ class Worker:
             if resource_task_id is not None:
                 finish("success")
                 _append_event(
-                    self.registry,
                     work_item,
                     {
                         "event": "resource_step_succeeded",
@@ -949,7 +928,6 @@ class Worker:
             completion_started = None
             finish("success")
             _append_event(
-                self.registry,
                 work_item,
                 {
                     "event": "attempt_succeeded",
@@ -964,7 +942,6 @@ class Worker:
         except AttemptInvalidated as error:
             finish("cancelled", error_type="UpstreamStale", error_message=str(error))
             _append_event(
-                self.registry,
                 work_item,
                 {"event": "attempt_cancelled", "attempt_id": attempt_id, "error": str(error)},
             )
@@ -976,7 +953,6 @@ class Worker:
                 error_message=message,
             )
             _append_event(
-                self.registry,
                 work_item,
                 {"event": "attempt_cancelled", "attempt_id": attempt_id, "error": message},
             )
@@ -995,7 +971,6 @@ class Worker:
             finish("error", error_type=type(error).__name__, error_message=message)
             self._cancel_failed_descendants(work_item)
             _append_event(
-                self.registry,
                 work_item,
                 {
                     "event": "attempt_failed",
@@ -1283,7 +1258,7 @@ class Worker:
 def build_parser() -> argparse.ArgumentParser:
     """Build the internal worker-process argument parser."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--bids-root", default=BIDS_PATH)
+    parser.add_argument("--bids-root", default=bids_path())
     parser.add_argument("--resource-class", choices=tuple(COMPATIBLE), default="large")
     parser.add_argument("--memory-gb", type=int, default=32)
     parser.add_argument("--idle-timeout", type=float, default=30.0)

@@ -11,12 +11,10 @@ from nro.definitions.markup import load_source_markup
 from nro.definitions.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.clean_targets import CleanTarget, expected_clean_target
-from nro.engine.cli import stderr
+from nro.engine.cli import module_target_parser, start_module_target, stderr
 from nro.engine.io import flatten_paths, read_public_json, write_public_json
-from nro.engine.paths import module_derivatives_root, module_work_root
+from nro.engine.paths import module_output_roots
 from nro.engine.targets import (
-    DEFAULT_SMOOTHING_MM,
-    DEFAULT_SPACE,
     supported_output_spaces,
     target_output_names,
 )
@@ -28,7 +26,7 @@ from nro.orchestration.runtime import (
     select_runtime_config,
     selected_configuration_fingerprint,
 )
-from nro.site.paths import BIDS_PATH, WORK_PATH
+from nro.site.paths import bids_path
 
 from .config import InclusionConfig, InputsConfig, LowRankConfig, ModuleConfig, OutputConfig
 from .module import build_module
@@ -48,21 +46,9 @@ def make_target_config(
     """Resolve one selected target into an executable module configuration."""
 
     sub_id = f"sub-{participant}"
-    output_base = module_derivatives_root(
-        "dynconn",
-        dynconn_id,
-        project=project,
-        bids_root=Path(BIDS_PATH if execution_context is None else execution_context.paths.bids),
+    output_base, work_base = module_output_roots(
+        "dynconn", dynconn_id, project=project, execution_context=execution_context
     )
-    work_base = module_work_root(
-        "dynconn",
-        dynconn_id,
-        project=project,
-        work_root=Path(WORK_PATH if execution_context is None else execution_context.paths.work),
-    )
-    if execution_context is not None:
-        output_base = execution_context.output_path(output_base)
-        work_base = execution_context.output_path(work_base, private=True)
     target, prefix = target_output_names(
         sub_id,
         clean_target.space,
@@ -91,22 +77,7 @@ def make_target_config(
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the standalone module parser used by orchestration workers."""
-
-    parser = argparse.ArgumentParser(
-        description="Package cleaned time series for Workbench dynamic connectivity."
-    )
-    parser.add_argument("-p", "--participant", required=True)
-    parser.add_argument("-P", "--project", required=True)
-    parser.add_argument("-s", "--space", default=DEFAULT_SPACE)
-    parser.add_argument("-S", "--smoothing", type=int, default=DEFAULT_SMOOTHING_MM, metavar="MM")
-    parser.add_argument("-w", "--workflow", default="main")
-    parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
-    )
-    return parser
+    return module_target_parser("Package cleaned time series for Workbench dynamic connectivity.")
 
 
 def main(
@@ -115,12 +86,8 @@ def main(
     execution_context: ExecutionContext | None = None,
 ) -> None:
     """Select cleaned runs and execute one dynamic-connectivity work item."""
-
     args = build_parser().parse_args(argv)
-    if args.smoothing < 0:
-        raise SystemExit("--smoothing must be a nonnegative integer FWHM in mm")
-    participant = args.participant.removeprefix("sub-")
-    logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(message)s")
+    participant = start_module_target(args, execution_context)
     runtime_config = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
@@ -130,7 +97,7 @@ def main(
     dynconn_id, config = load_runtime_configuration(runtime_config, "dynconn")
     snapshot = load_runtime_workflow_snapshot(runtime_config)
     source_subject = (
-        Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
+        Path(bids_path() if execution_context is None else execution_context.paths.bids)
         / args.project
         / f"sub-{participant}"
     )
@@ -221,8 +188,7 @@ def main(
         f"smoothing-{target.smoothing_mm}mm dynamic connectivity using "
         f"{len(target.functional)} run(s)\n"
     )
-    with runner.run_context(started_at=started):
-        runner.execute()
+    runner.execute_graph(started_at=started)
     for name, path in result.items():
         print(
             f"{target.domain}/space-{target.space}/smoothing-{target.smoothing_mm}mm/{name}: {path}"

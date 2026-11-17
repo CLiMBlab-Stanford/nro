@@ -770,6 +770,5 @@ def run_module(
         output_root=output_root,
         execution_context=execution_context,
     )
-    with runner.run_context():
-        runner.execute()
+    runner.execute_graph()
     return completion

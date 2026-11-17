@@ -32,21 +32,22 @@ def compact_status_rows(rows: list[dict]) -> list[dict]:
     ]
 
 
-def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -> dict:
-    """Supply central workers only for requests owned by the authorized checkout."""
-    branches = BranchStore(registry.paths.control)
-    name = branches.read().topology.registered_checkout(checkout)
-    owner = branches.read().topology.records[name].registry_id
+def _prepare_supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -> None:
+    """Check request ownership, then apply settings and reconciliation shared by supply calls."""
+    from nro.orchestration.registry import require_request_owner
+
+    topology = BranchStore(registry.paths.control).read().topology
+    owner = topology.records[topology.registered_checkout(checkout)].registry_id
     with registry.connection() as db:
-        for request_id in request_ids:
-            row = db.execute(
-                "SELECT registry_id FROM request_owners WHERE request_id=?", (request_id,)
-            ).fetchone()
-            if row is None or row[0] != owner:
-                raise ValueError("Worker supply request belongs to another branch")
+        require_request_owner(db, request_ids, owner, purpose="Worker supply")
     registry.set_gpu_concurrency(int(options.get("gpu_concurrency", 1)))
     registry.cancel_attempts_with_stale_upstreams()
     registry.reconcile_requests()
+
+
+def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -> dict:
+    """Supply central workers only for requests owned by the authorized checkout."""
+    _prepare_supply(registry, request_ids, options, checkout=checkout)
     from nro.orchestration.scheduler_implementation import run_local_worker
     from nro.orchestration.submission import _submit_workers, _write_worker_script
 
@@ -117,20 +118,13 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
 
 
 def supply_needed(registry, request_ids: list[str], options: dict, *, checkout: Path) -> dict:
-    """Assess whether a supply request needs a new worker service."""
-    branches = BranchStore(registry.paths.control)
-    name = branches.read().topology.registered_checkout(checkout)
-    owner = branches.read().topology.records[name].registry_id
-    with registry.connection() as db:
-        for request_id in request_ids:
-            row = db.execute(
-                "SELECT registry_id FROM request_owners WHERE request_id=?", (request_id,)
-            ).fetchone()
-            if row is None or row[0] != owner:
-                raise ValueError("Worker supply request belongs to another branch")
-    registry.set_gpu_concurrency(int(options.get("gpu_concurrency", 1)))
-    registry.cancel_attempts_with_stale_upstreams()
-    registry.reconcile_requests()
+    """Prepare the requests for supply and report whether a new worker is needed.
+
+    Like `supply`, this applies the GPU concurrency option, cancels attempts
+    with stale upstreams, and reconciles requests. Capacity is assessed for the
+    first request only.
+    """
+    _prepare_supply(registry, request_ids, options, checkout=checkout)
     needed = False
     for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
         lower_memory = 0
@@ -325,84 +319,6 @@ def stop(registry, *, checkout: Path, selection: dict) -> dict:
     topology = branches.read().topology
     name = topology.registered_checkout(checkout)
     return registry.request_stop(**selection, branch_registry_id=topology.records[name].registry_id)
-
-
-def logs(
-    registry,
-    *,
-    checkout: Path,
-    selection: dict,
-    worker_level: bool,
-    running_only: bool = False,
-) -> dict:
-    """Resolve logs of selected branch artifacts or the workers that executed them."""
-    from nro.engine.cli import matches_module_lineage, matches_work_item_selectors
-
-    name = BranchStore(registry.paths.control).read().topology.registered_checkout(checkout)
-    report = status(registry, checkout=checkout, mode="cached")
-    visible = set(report["visible_ids"])
-    requested_modules = set(selection["modules"])
-    bidsify_selected = "bidsify" in requested_modules
-    scientific_modules = requested_modules - {"bidsify"}
-    scientific_selected = not requested_modules or bool(scientific_modules)
-    selected = [
-        row
-        for row in report["rows"]
-        if scientific_selected
-        and row["id"] in visible
-        and all(
-            not selection[key] or row[field] in selection[key]
-            for key, field in (
-                ("projects", "project"),
-                ("participants", "participant"),
-            )
-        )
-        and (not scientific_modules or row["module"] in scientific_modules)
-        and matches_module_lineage(
-            row["module"], row.get("directory_label", ""), selection.get("lineages", ())
-        )
-        and (
-            not selection["workflows"]
-            or set(selection["workflows"]).intersection(
-                str(row.get("workflow_ids") or "").split(",")
-            )
-        )
-        and matches_work_item_selectors(json.loads(row["entities_json"]), selection["selectors"])
-        and (not running_only or row.get("status") == "Running")
-    ]
-    if worker_level:
-        ids = {row["id"] for row in selected}
-        with registry.connection() as db:
-            paths = [
-                str(registry.paths.workers / f"slurm-{row['slurm_job_id']}.log")
-                for row in db.execute("""SELECT a.work_item_id,w.slurm_job_id FROM attempts a
-                    JOIN workers w ON w.id=a.worker_id WHERE w.slurm_job_id IS NOT NULL""")
-                if row["work_item_id"] in ids
-            ]
-    else:
-        paths = [row["log_path"] for row in selected if row.get("log_path")]
-    if (
-        bidsify_selected
-        and not selection["workflows"]
-        and not selection.get("lineages")
-        and set(selection["selectors"]) <= {"ses"}
-    ):
-        from nro.bidsify.store import IngestionStore
-
-        sessions = selection["selectors"].get("ses", ())
-        store = IngestionStore(registry, branch=name)
-        paths.extend(
-            str(store.root / f"{row['id']}.log")
-            for row in report["ingestion"]
-            if (
-                not selection.get("ingestion_projects")
-                or row["project"] in selection["ingestion_projects"]
-            )
-            and (not selection["participants"] or row["participant"] in selection["participants"])
-            and (not sessions or row["session"] in sessions)
-            and (not running_only or row.get("state") == "running")
-        )
-    return {"paths": sorted(set(paths))}
 
 
 def pool_operation(registry, *, checkout: Path, operation: str, concurrency=None) -> dict:

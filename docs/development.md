@@ -203,7 +203,8 @@ private-state transactions. Locally, run the focused tests for the files and
 behavior you changed. `nro dev test` selects them for you, as described in
 [scoped validation](architecture-map.md#scoped-validation). It and its
 sphere-specific variants run the repository's formatting and lint checks before
-pytest, so style failures appear before you open a pull request.
+pytest, so style failures appear before you open a pull request. Unlike plain
+`pytest`, `nro dev test` runs both tiers.
 
 Pull-request checks run the complete suite before a release can merge:
 
@@ -212,6 +213,21 @@ Pull-request checks run the complete suite before a release can merge:
 ```
 
 Use `-m integration` to run only the integration tier.
+
+The complete suite takes more than an hour on one core. To run it on a Slurm
+node instead, submit the batch script from the checkout:
+
+```bash
+sbatch --partition=PARTITION --account=ACCOUNT development/test-suite.sbatch
+```
+
+The job clones the checkout to node-local scratch, copies uncommitted changes
+over the clone, and runs both tiers with one `pytest-xdist` worker per
+allocated CPU (32 by default). It uses the checkout's `.nro-env`, so install
+with `--dev` first. Arguments after the script name go to pytest, and the log
+is written to `slurm-nro-tests-JOBID.out`. The job limits each worker to one
+OpenMP and BLAS thread. To run in parallel locally, set the same limit, for
+example `OMP_NUM_THREADS=1 pytest -n auto`.
 
 When a change touches installation, orchestration schemas, migrations, or
 release management, also run the maintenance rehearsal locally:
@@ -249,8 +265,9 @@ may import nro after fixture setup, so `E402` is the only rule ignored under
 `tests/`. A new ignore needs a specific reason and should be narrower than a
 repository-wide rule.
 
-Plans under `plans/` are maintained design guidance for agents. Update a plan
-when the behavior it describes changes, and remove superseded instructions.
+Plans under `plans/` are maintained design guidance for agents. They are local
+to each checkout and are not tracked by Git. Update a plan when the behavior it
+describes changes, and remove superseded instructions.
 Migration reports belong under `plans/evidence/` and do not define current
 behavior.
 

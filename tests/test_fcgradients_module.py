@@ -33,9 +33,9 @@ from nro.viz.data import layer_map
 
 
 def _workbench() -> str | None:
-    from nro.site.paths import WB_COMMAND_PATH
+    from nro.site.paths import wb_command_path
 
-    for candidate in (str(WB_COMMAND_PATH), shutil.which("wb_command")):
+    for candidate in (str(wb_command_path()), shutil.which("wb_command")):
         if candidate and os.access(candidate, os.X_OK):
             return candidate
     return None

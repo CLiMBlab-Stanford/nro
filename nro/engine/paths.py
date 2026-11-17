@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from nro.modules import MODULE_NAMES
-from nro.site.paths import BIDS_PATH, WORK_PATH
+from nro.site.paths import bids_path, work_path
 
 
 def _directory_component(value: str, *, label: str) -> str:
@@ -18,12 +18,12 @@ def _directory_component(value: str, *, label: str) -> str:
 
 def project_data_root(project: str, *, bids_root: Path | None = None) -> Path:
     """Resolve a project under the supplied BIDS root or the selected site root."""
-    return (Path(BIDS_PATH if bids_root is None else bids_root) / project).resolve()
+    return (Path(bids_path() if bids_root is None else bids_root) / project).resolve()
 
 
 def project_work_root(project: str) -> Path:
     """Resolve a project's private work root."""
-    return (Path(WORK_PATH) / project).resolve()
+    return (Path(work_path()) / project).resolve()
 
 
 def module_namespace_root(project_root: Path, module: str) -> Path:
@@ -58,6 +58,33 @@ def module_work_root(
         project_work_root(project) if work_root is None else Path(work_root).resolve() / project
     )
     return module_artifact_root(project_root, module, module_id)
+
+
+def module_output_roots(
+    module: str, module_id: str, *, project: str, execution_context=None
+) -> tuple[Path, Path]:
+    """Return one module configuration's public derivative root and private work root.
+
+    Without an execution context, both roots come from the site configuration.
+    With one, they come from the context's BIDS and work roots and are routed to
+    the attempt's branch-owned output locations.
+    """
+    output_root = module_derivatives_root(
+        module,
+        module_id,
+        project=project,
+        bids_root=Path(bids_path() if execution_context is None else execution_context.paths.bids),
+    )
+    work_root = module_work_root(
+        module,
+        module_id,
+        project=project,
+        work_root=Path(work_path() if execution_context is None else execution_context.paths.work),
+    )
+    if execution_context is not None:
+        output_root = execution_context.output_path(output_root)
+        work_root = execution_context.output_path(work_root, private=True)
+    return output_root, work_root
 
 
 def module_subject_dir(

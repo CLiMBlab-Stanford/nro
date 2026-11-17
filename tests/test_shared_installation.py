@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nro.orchestration import scheduler_operations, scheduler_service, worker_control
+from nro.orchestration import scheduler_operations, scheduler_service, slurm_jobs, worker_control
 from nro.orchestration.branch_registry import SCHEMA_VERSION as SCIENTIFIC_SCHEMA_VERSION
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import Registry
@@ -74,7 +74,7 @@ def test_initial_activation_checks_recorded_worker_allocations(tmp_path, monkeyp
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
     registry.initialize()
     registry.register_worker("old-worker", resource_class="small", slurm_job_id="101")
-    monkeypatch.setattr(worker_control, "_slurm_job_terminal", lambda job_id: terminal)
+    monkeypatch.setattr(slurm_jobs, "job_terminal", lambda job_id: terminal)
 
     if not terminal:
         with pytest.raises(RuntimeError, match="unmanaged worker pool"):
@@ -425,7 +425,7 @@ def test_worker_cancellation_accepts_an_already_finished_allocation(monkeypatch)
         def update_submission(self, submission_id, *, state):
             updates.append((submission_id, state))
 
-    monkeypatch.setattr(worker_control, "_slurm_job_terminal", lambda job_id: True)
+    monkeypatch.setattr(slurm_jobs, "job_terminal", lambda job_id: True)
     monkeypatch.setattr(
         worker_control.subprocess,
         "run",
@@ -467,7 +467,7 @@ def test_installation_stop_waits_for_confirmed_allocation_exit(tmp_path, monkeyp
         lambda _control: SimpleNamespace(read=lambda: SimpleNamespace(topology=topology)),
     )
     terminal = False
-    monkeypatch.setattr(worker_control, "_slurm_job_terminal", lambda _job_id: terminal)
+    monkeypatch.setattr(slurm_jobs, "job_terminal", lambda _job_id: terminal)
     monkeypatch.setattr(
         worker_control.subprocess,
         "run",
@@ -528,7 +528,9 @@ def test_publish_records_release_in_installation(tmp_path, monkeypatch, mode):
     monkeypatch.setattr(
         "nro.site.configuration.installation_record", lambda checkout=None: installation.copy()
     )
-    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry = Registry.for_project(
+        "", bids_root=tmp_path / "BIDS", registry_path=tmp_path / ".nro"
+    )
     registry.initialize()
 
     def activate(registry, checkout, **options):

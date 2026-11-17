@@ -66,7 +66,7 @@ nro dev schema check
 ```
 
 For pull requests into `main`, the check also passes the base commit to
-`schema check`. The check rejects a rewritten baseline, an incomplete migration
+`schema check` with `--base-ref REF`. The check rejects a rewritten baseline, an incomplete migration
 chain, or a generated schema that fails structural, foreign-key, or SQLite
 integrity checks. Moving the earliest supported baseline forward is a separate
 release-policy decision.

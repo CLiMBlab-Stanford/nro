@@ -17,13 +17,13 @@ from nro.engine.cleaned_timeseries import (
     load_retained_frame_mask,
 )
 from nro.engine.connectivity import connectivity_run_weights
+from nro.engine.execution import create_configuration_snapshot_step
 from nro.engine.image_paths import sidecar_json_path
 from nro.engine.images import load_surface_timeseries, surface_timeseries_shape
 from nro.engine.io import (
     atomic_output_path,
     atomic_write_json,
     atomic_write_text,
-    json_path_default,
 )
 from nro.engine.references import portable_public_payload, resolve_public_payload
 from nro.orchestration.runner import Runner, write_completion_breadcrumb
@@ -179,24 +179,14 @@ def build_module(
             "output_prefix": cfg.output.prefix,
         },
     )
-    config_text = (
-        json.dumps(config_payload, default=json_path_default, indent=2, sort_keys=True) + "\n"
-    )
-
-    def validate_config_snapshot() -> tuple[bool, str]:
-        matches = (
-            config_snapshot.is_file() and config_snapshot.read_text(encoding="utf-8") == config_text
-        )
-        return matches, "Configuration snapshot matches."
-
     runner.add_step(
-        Step.python(
+        create_configuration_snapshot_step(
+            config_snapshot,
+            config_payload,
             name="Resolve Dynamic-Connectivity Configuration",
+            label="Dynamic-connectivity configuration",
             inputs=(initialized,),
-            outputs=(config_snapshot,),
             force=force,
-            action=lambda: atomic_write_text(config_snapshot, config_text),
-            validate=validate_config_snapshot,
         )
     )
 

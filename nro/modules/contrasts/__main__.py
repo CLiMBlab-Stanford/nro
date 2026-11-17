@@ -12,7 +12,7 @@ from nro.engine.paths import module_work_root
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runtime import select_runtime_config
-from nro.site.paths import BIDS_PATH, WORK_PATH
+from nro.site.paths import bids_path, work_path
 
 from .module import run_module
 from .planning import selected_runs
@@ -52,7 +52,7 @@ def main(
         else load_task_model(args.model)
     )
     project_root = (
-        Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
+        Path(bids_path() if execution_context is None else execution_context.paths.bids)
         / args.project
     )
     load_source_markup(config["markup"], args.project, project_root / f"sub-{participant}")
@@ -79,7 +79,7 @@ def main(
             config_id,
             project=args.project,
             work_root=Path(
-                WORK_PATH if execution_context is None else execution_context.paths.work
+                work_path() if execution_context is None else execution_context.paths.work
             ),
         ),
         execution_context=execution_context,

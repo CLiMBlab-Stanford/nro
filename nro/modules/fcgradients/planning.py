@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING, Mapping
 
 from nro.engine.paths import anatomical_manifest_path, module_derivatives_root
@@ -10,7 +9,7 @@ from nro.engine.targets import is_surface_space, smoothing_entity_value
 from nro.modules.dynconn.contract import dynconn_output_paths
 from nro.modules.fcgradients.contract import fcgradients_output_paths
 from nro.orchestration.contracts import WorkItemSpec
-from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
+from nro.orchestration.planning_context import SubjectPlanningContext
 
 if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
@@ -23,7 +22,6 @@ def plan_work_items(
 ) -> tuple[WorkItemSpec, ...]:
     """Construct one gradient work item for each requested target pair."""
 
-    lineage = context.registered.lineages[descriptor.configuration_class]
     directory_label = context.registered.directories[descriptor.configuration_class]
     output_base = module_derivatives_root(
         "fcgradients",
@@ -46,38 +44,11 @@ def plan_work_items(
         prefix = f"{context.sub_id}_space-{space}_smoothing-{smoothing_entity_value(smoothing)}"
         source = next(item for item in upstream["dynconn"] if item.entities == entities)
         result.append(
-            WorkItemSpec.create(
-                key=work_item_key(
-                    context.project,
-                    descriptor.name,
-                    context.registered.lineage_fingerprints[descriptor.configuration_class],
-                    context.participant,
-                    entities,
-                ),
-                module=descriptor.name,
-                project=context.project,
-                participant=context.participant,
+            context.target_work_item(
+                descriptor,
                 entities=entities,
-                scope=descriptor.scope,
-                module_lineage_id=lineage,
-                config_fingerprint=context.workflow.configuration(
-                    descriptor.configuration_class
-                ).scientific_fingerprint,
-                directory_label=directory_label,
-                runtime_config=context.runtime_config(descriptor.configuration_class),
-                command=(
-                    sys.executable,
-                    "-m",
-                    descriptor.execution_module,
-                    "--participant",
-                    context.participant,
-                    "--project",
-                    context.project,
-                    "--space",
-                    space,
-                    "--smoothing",
-                    str(smoothing),
-                ),
+                space=space,
+                smoothing=smoothing,
                 dependencies=(source.key, anat.key),
                 input_paths=(
                     *context.aggregate_source_inputs,
@@ -88,15 +59,10 @@ def plan_work_items(
                 ),
                 output_root=output_root,
                 output_prefix=prefix,
-                output_format=descriptor.output_format,
-                resource_class=descriptor.resource_class,
-                memory_gb=context.memory_gb,
-                max_memory_gb=context.max_memory_gb,
                 expected_outputs=tuple(
                     fcgradients_output_paths(output_root, prefix, domain)[name]
                     for name in ("manifest", "index")
                 ),
-                processing=context.processing_contract(descriptor),
             )
         )
     return tuple(result)

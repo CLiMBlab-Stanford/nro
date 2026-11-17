@@ -31,7 +31,7 @@ def prefix(record: dict, item: dict) -> str:
     )
 
 
-def convert(record: dict, registry) -> dict:
+def convert(record: dict) -> dict:
     """Organize sanitized helper images with dcm2bids and write approved associations."""
     unresolved = issues(record, prepared=True)
     if unresolved:
@@ -199,8 +199,7 @@ def run_stage(record: dict, registry, *, source=None, branch_paths=None) -> dict
                     force=True,
                 )
             )
-        with runner.run_context():
-            runner.execute()
+        runner.execute_graph()
         return {
             "state": "needs_input",
             "stage": "convert",
@@ -208,7 +207,7 @@ def run_stage(record: dict, registry, *, source=None, branch_paths=None) -> dict
             "issues": issues(record, prepared=True),
         }
     if record["stage"] == "convert":
-        return convert(record, registry)
+        return convert(record)
     if record["stage"] == "publish":
         return {"state": "published", **publish(record, registry, branch_paths=branch_paths)}
     raise BidsificationError("Unknown ingestion stage")

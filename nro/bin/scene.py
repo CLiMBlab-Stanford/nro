@@ -34,7 +34,7 @@ from nro.engine.workbench import resolve_workbench_command, surface_inventory
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.catalog import MODULES
-from nro.site.paths import WB_COMMAND_PATH
+from nro.site.paths import wb_command_path
 from nro.site.slurm_arguments import VIEWER_GROUPS, add_slurm_arguments, apply_slurm_arguments
 
 
@@ -283,7 +283,7 @@ def build_parser(*, prog: str = "nro.bin.scene") -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
-    parser.add_argument("--wb-command", default=WB_COMMAND_PATH)
+    parser.add_argument("--wb-command", default=wb_command_path())
     parser.add_argument(
         "--publish", action="store_true", help="Copy every input into the scene bundle"
     )

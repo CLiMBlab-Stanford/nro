@@ -10,9 +10,9 @@ from pathlib import Path
 import yaml
 
 from nro.engine.io import atomic_write_text
+from nro.site import configuration as site_config
 from nro.site.configuration import (
     DERIVED,
-    LAB,
     PATH_KEYS,
     _definitions_from_locator,
     default_parent_paths,
@@ -37,7 +37,7 @@ def interactive_defaults(sources: dict, *, default_parent_dir: Path | None = Non
     """Suggest generic storage when lab storage is unavailable; retain explicit settings."""
     if default_parent_dir is not None:
         return default_parent_paths(default_parent_dir)
-    if LAB.is_dir() and os.access(LAB, os.R_OK | os.X_OK):
+    if site_config.LAB.is_dir() and os.access(site_config.LAB, os.R_OK | os.X_OK):
         return {}
     return {
         key: value for key, value in generic_defaults().items() if sources[key] == "lab default"
@@ -105,7 +105,7 @@ def migrate_site_configuration(path: Path) -> Path:
     """
     path = Path(path)
     legacy = read_overrides(path)
-    definitions = _definitions_from_locator(path, legacy)
+    definitions = _definitions_from_locator(legacy)
     protected_path = site_definition_path(definitions)
     if not definitions.exists():
         from nro.definitions.repository import create_store

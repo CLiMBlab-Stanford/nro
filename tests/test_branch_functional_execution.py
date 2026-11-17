@@ -483,3 +483,69 @@ def test_confounds_changes_invalidate_only_functional_publication(functional_cas
     assert {by_id[step_id].name for step_id in graph.descendants(confounds)} == {
         "Publish Functional Derivatives"
     }
+
+
+def _with_fieldmaps(inputs, image):
+    fmap = inputs.epi.parent.parent / "fmap"
+    fmap.mkdir(exist_ok=True)
+    images, sidecars = [], []
+    for index, direction in enumerate(("j", "j-")):
+        path = fmap / f"fieldmap-{index}.nii.gz"
+        path.write_bytes(image.read_bytes())
+        sidecar = path.with_name(path.name.replace(".nii.gz", ".json"))
+        sidecar.write_text(
+            json.dumps({"PhaseEncodingDirection": direction, "TotalReadoutTime": 0.05})
+        )
+        images.append(path)
+        sidecars.append(sidecar)
+    return replace(inputs, se1=images[0], se2=images[1], se1_json=sidecars[0], se2_json=sidecars[1])
+
+
+GOLDEN_FUNCTIONAL_CASES = {
+    "syn_no_ica": dict(ica_classifier="none"),
+    "syn_aroma": dict(ica_classifier="ica_aroma"),
+    "syn_cicada": dict(ica_classifier="cicada"),
+    "syn_t1w_only": dict(ica_classifier="none", output_spaces=("T1w",)),
+    "synbold_no_ica": dict(ica_classifier="none", sdc_method="synbold_disco"),
+    "fieldmap_no_ica": dict(ica_classifier="none", fieldmaps=True),
+    "fieldmap_aroma": dict(ica_classifier="ica_aroma", fieldmaps=True),
+    "fieldmap_gradient": dict(ica_classifier="none", fieldmaps=True, gradient=True),
+}
+
+
+@pytest.mark.parametrize("case", sorted(GOLDEN_FUNCTIONAL_CASES))
+def test_functional_graph_matches_golden_contract(functional_case, monkeypatch, tmp_path, case):
+    from graph_golden import assert_matches_golden, record_graph
+
+    inputs, options, context, _manifest, image = functional_case
+    settings = dict(GOLDEN_FUNCTIONAL_CASES[case])
+    if settings.pop("fieldmaps", False):
+        inputs = _with_fieldmaps(inputs, image)
+    if settings.pop("gradient", False):
+        coefficient = options.work_dir.parent / "gradient.grad"
+        coefficient.parent.mkdir(parents=True, exist_ok=True)
+        coefficient.write_text("coefficient")
+        options.gradient_unwarp_image.write_bytes(b"image")
+        resolution = GradientUnwarpingResolution(
+            mode="auto",
+            applied=True,
+            reason="matched",
+            profile="test",
+            action="unwarp",
+            matched_metadata={},
+            coefficients=coefficient,
+            coefficient_sha256="test",
+            override_existing_correction=False,
+        )
+        monkeypatch.setattr(func, "resolve_gradient_unwarping", lambda *_a, **_k: resolution)
+    if settings.get("sdc_method") == "synbold_disco":
+        options.synbold_disco_license.write_text("license")
+    options = replace(options, **settings)
+
+    record = record_graph(
+        lambda: func.build_module(inputs, options, execution_context=context),
+        tmp_path,
+        monkeypatch,
+    )
+
+    assert_matches_golden(f"func_{case}", record)

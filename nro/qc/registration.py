@@ -16,7 +16,7 @@ from nro.definitions.runtime import load_runtime_configuration
 from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.engine.paths import anat_subject_dir, module_derivatives_root
 from nro.orchestration.runtime import resolve_workflow_runtime
-from nro.site.paths import BIDS_PATH
+from nro.site.paths import bids_path
 
 _SCENE_TEMPLATE = Path(__file__).with_name("registration_audit.scene.in")
 _TEMPLATE_VOLUME = "sub-c001_desc-firstvolsAcrossRuns_leftSagSlab_bold.nii.gz"
@@ -370,7 +370,7 @@ def main(
     subject = args.participant if args.participant.startswith("sub-") else f"sub-{args.participant}"
     from nro.orchestration.branch_views import registered_rows
 
-    rows = registered_rows(Path(BIDS_PATH))
+    rows = registered_rows(Path(bids_path()))
     if rows is not None:
         from nro.orchestration.branch_store import BranchStore
         from nro.orchestration.branches import BranchPaths
@@ -457,10 +457,10 @@ def main(
         "func",
     )
     derivative_root = module_derivatives_root(
-        "func", func_id, project=args.project, bids_root=Path(BIDS_PATH)
+        "func", func_id, project=args.project, bids_root=Path(bids_path())
     ).resolve()
     subject_dir = anat_subject_dir(
-        subject, project=args.project, anat_id=anat_id, bids_root=Path(BIDS_PATH)
+        subject, project=args.project, anat_id=anat_id, bids_root=Path(bids_path())
     ).resolve()
     functional_subject = derivative_root / subject
     if not subject_dir.is_dir():

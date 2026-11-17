@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
-from nro.engine.io import atomic_copy_file
+from nro.engine.io import atomic_copy_file, json_path_default, read_json, write_json
 from nro.orchestration.runner_graph import Step
 
 _THREAD_ENVIRONMENT_VARIABLES = (
@@ -64,6 +65,47 @@ def create_copy_file_step(
         action=lambda: atomic_copy_file(src, dst),
         validate=validate,
         parameters=parameters,
+    )
+
+
+def create_configuration_snapshot_step(
+    path: Path,
+    configuration: Mapping[str, Any],
+    *,
+    name: str,
+    label: str,
+    inputs: Sequence[Path],
+    force: bool,
+    normalize: Callable[[dict[str, Any]], Any] | None = None,
+) -> Step:
+    """Record a module's resolved configuration and validate the recorded copy.
+
+    The configuration is stored as JSON; paths become strings and tuples become
+    lists. A recorded snapshot is valid when it equals the requested one after
+    `normalize`, which can interpret snapshots written by earlier releases.
+    `label` names the configuration in validation messages, for example
+    "Functional configuration".
+    """
+    payload = json.loads(json.dumps(configuration, default=json_path_default))
+
+    def validate() -> tuple[bool, str]:
+        try:
+            recorded = read_json(path)
+        except (OSError, ValueError, TypeError):
+            return False, f"{label} snapshot is missing or unreadable."
+        if normalize is not None:
+            recorded = normalize(recorded)
+        if recorded != payload:
+            return False, f"{label} changed."
+        return True, f"{label} is unchanged."
+
+    return Step.python(
+        name=name,
+        inputs=tuple(inputs),
+        outputs=(path,),
+        force=force,
+        action=lambda: write_json(path, payload),
+        validate=validate,
     )
 
 

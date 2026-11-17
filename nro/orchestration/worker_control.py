@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 import socket
 import subprocess
 import time
 
+from nro.orchestration import slurm_jobs
+from nro.orchestration.local_processes import process_state
 from nro.orchestration.registry import Registry
 
 
@@ -24,7 +24,7 @@ def cancel_worker_allocations(
     for submission_id, job_id in shutdown["submissions"]:
         submissions.setdefault(job_id, []).append(submission_id)
     for job_id in shutdown["job_ids"]:
-        if _slurm_job_terminal(job_id) is True:
+        if slurm_jobs.job_terminal(job_id) is True:
             if update_registry:
                 for submission_id in submissions.get(job_id, ()):
                     registry.update_submission(submission_id, state="cancelled")
@@ -48,37 +48,6 @@ def cancel_worker_allocations(
     return stopped, failures
 
 
-def _process_exists(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except (PermissionError, OSError):
-        return True
-    return True
-
-
-def _slurm_job_terminal(job_id: str) -> bool | None:
-    """Return whether Slurm confirms that an allocation no longer exists."""
-    if not shutil.which("squeue"):
-        return None
-    try:
-        result = subprocess.run(
-            ["squeue", "--noheader", "--jobs", job_id, "--format", "%T"],
-            text=True,
-            capture_output=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode == 0:
-        return not bool(result.stdout.strip())
-    message = (result.stderr + result.stdout).lower()
-    if "invalid job id" in message:
-        return True
-    return None
-
-
 def active_pool_members(activity: dict) -> tuple[list[str], list[str]]:
     """Return worker IDs and job IDs whose termination is not yet confirmed."""
     now = time.time()
@@ -92,7 +61,7 @@ def active_pool_members(activity: dict) -> tuple[list[str], list[str]]:
             continue
         if row.get("hostname") == hostname:
             try:
-                alive = _process_exists(int(row["pid"]))
+                alive = process_state(int(row["pid"])) != "absent"
             except (TypeError, ValueError):
                 alive = True
         else:
@@ -103,7 +72,7 @@ def active_pool_members(activity: dict) -> tuple[list[str], list[str]]:
     jobs.update(
         str(row["slurm_job_id"]) for row in activity["submissions"] if row.get("slurm_job_id")
     )
-    active_jobs = [job_id for job_id in sorted(jobs) if _slurm_job_terminal(job_id) is not True]
+    active_jobs = [job_id for job_id in sorted(jobs) if slurm_jobs.job_terminal(job_id) is not True]
     return workers, active_jobs
 
 

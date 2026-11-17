@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
+from nro.engine.cli import add_core_selection_arguments, confirm, core_selection, page_text
 from nro.orchestration.catalog import MODULES
 
 
@@ -53,14 +53,6 @@ def _render(public: list[str], work: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _confirm() -> bool:
-    try:
-        response = input("Proceed with garbage collection? [y/N] ")
-    except (EOFError, KeyboardInterrupt):
-        return False
-    return response.strip().lower() in {"y", "yes"}
-
-
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.gc") -> None:
     """Preview and optionally remove unclaimed files in selected public namespaces."""
     args = build_parser(prog=prog).parse_args(argv)
@@ -89,7 +81,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.gc") -> None:
     )
     if not args.json:
         page_text(_render(preview["public_paths"], preview["work_paths"]))
-    if not args.dry_run and preview["paths"] and not args.force and not _confirm():
+    if (
+        not args.dry_run
+        and preview["paths"]
+        and not args.force
+        and not confirm("Proceed with garbage collection?")
+    ):
         print("Garbage collection cancelled.")
         return
     result = preview

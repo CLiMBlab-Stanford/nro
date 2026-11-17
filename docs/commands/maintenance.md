@@ -354,6 +354,31 @@ migration. Successful execution or interactive cancellation deletes the
 preparation, and a newer preview for the same projects and nro version replaces
 an older one.
 
+## `nro hotfix`
+
+`nro hotfix` repairs private records written by a release with a known defect,
+so that only the affected work is recomputed. Each hotfix has an identifier
+that names the release it targets:
+
+```bash
+nro hotfix
+nro hotfix HOTFIX -P PROJECT --dry-run
+nro hotfix HOTFIX -P PROJECT
+nro hotfix HOTFIX -P PROJECT -f
+```
+
+Without an identifier, the command lists the available hotfixes and their
+summaries. With one, it previews the records it would repair and asks for
+confirmation. `--dry-run` stops after the preview and `-f`/`--force` applies
+the repair without a prompt. Pass several project IDs after `-P`; omitting
+`-P` selects every BIDS project.
+
+Like `nro migrate`, the command runs through the central scheduler and is
+available only from the main installation. Applying a hotfix requires that the
+selected projects have no queued or running attempts. A hotfix changes no
+public derivative. The next request recomputes the work whose records it
+removed.
+
 ## `nro publish`
 
 `nro publish` copies the public outputs of a completed request into a new

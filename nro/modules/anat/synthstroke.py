@@ -8,7 +8,6 @@ are installed centrally and checked before use.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 from typing import Any, Sequence
@@ -17,6 +16,7 @@ import nibabel as nib
 import numpy as np
 from nibabel.processing import resample_from_to, resample_to_output
 
+from nro.engine.io import file_sha256
 from nro.modules.anat.lesion_policy import (
     MASKER_CONFIG_SHA256,
     MASKER_MODEL,
@@ -29,14 +29,6 @@ from nro.modules.anat.lesion_policy import (
 )
 
 _FLIPS = ((), (2,), (3,), (4,), (2, 3), (2, 4), (3, 4), (2, 3, 4))
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _optional_stack() -> tuple[Any, Any, Any]:
@@ -64,7 +56,7 @@ def _model_files(model_directory: Path, model_id: str, revision: str) -> tuple[P
             raise RuntimeError(
                 f"SynthStroke resource is missing: {path}; run ./install --with-lesion"
             )
-        if _sha256(path) != digest:
+        if file_sha256(path) != digest:
             raise RuntimeError(
                 f"SynthStroke resource checksum does not match the pinned model: {path}"
             )

@@ -230,6 +230,23 @@ def test_real_fieldmaps_default_to_base_registration_without_anatomical_syn(
     assert refinement_target is None
 
 
+@pytest.mark.parametrize("requested_sdc_method", ["syn", "synbold_disco", "none"])
+@pytest.mark.parametrize("fieldmap_pair_available", [True, False])
+@pytest.mark.parametrize("fieldmap_syn_refine", [True, False])
+def test_synthetic_reference_and_anatomical_refinement_are_exclusive(
+    requested_sdc_method: str, fieldmap_pair_available: bool, fieldmap_syn_refine: bool
+) -> None:
+    # The functional graph has no step for refining a SynBOLD-corrected
+    # reference against anatomy, so the policy must never request both.
+    use_synbold_reference, refinement_target = _resolve_sdc_reference_policy(
+        requested_sdc_method=requested_sdc_method,
+        fieldmap_pair_available=fieldmap_pair_available,
+        fieldmap_syn_refine=fieldmap_syn_refine,
+    )
+
+    assert not (use_synbold_reference and refinement_target is not None)
+
+
 def test_fieldmap_anatomical_syn_cli_default_is_disabled() -> None:
     config = ConfigStore().load_configuration("func", "main").values
     assert config["fieldmap_syn_refine"] is False

@@ -25,7 +25,7 @@ from nro.orchestration.migrations import RegistrySchema, migrate_database
 from nro.orchestration.migrations.baseline import WORKFLOW_SQL
 from nro.orchestration.migrations.scientific import MIGRATIONS
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory
-from nro.orchestration.sql_values import JSON_VALUES, json_values
+from nro.orchestration.sql_values import JSON_VALUES, chunks, json_values
 from nro.orchestration.workflow_registry import (
     WorkflowRegistry,
     lineage_directory_label,
@@ -260,8 +260,7 @@ class BranchRegistry(WorkflowRegistry):
         selected = tuple(dict.fromkeys(str(key) for key in keys))
         revisions: dict[str, int | None] = dict.fromkeys(selected)
         with self._connection() as db:
-            for offset in range(0, len(selected), 500):
-                batch = selected[offset : offset + 500]
+            for batch in chunks(selected):
                 if not batch:
                     continue
                 rows = db.execute(
@@ -332,8 +331,7 @@ class BranchRegistry(WorkflowRegistry):
             return {}
         records: dict[str, tuple[int, int, int, str, str]] = {}
         with self._connection() as db:
-            for offset in range(0, len(selected), 500):
-                batch = selected[offset : offset + 500]
+            for batch in chunks(selected):
                 for row in db.execute(
                     f"SELECT path,size,mtime_ns,ctime_ns,kind,digest FROM planning_files "
                     f"WHERE path IN ({JSON_VALUES})",

@@ -1107,7 +1107,7 @@ def run(
     *,
     runner: Runner | None = None,
 ) -> NetworkOutputs:
-    """Construct the module graph, execute it through the shared runner, and publish outputs.
+    """Construct the module graph, execute it through the shared runner, and return its outputs.
 
     Freshness is evaluated after graph construction. Processing and validation
     errors propagate to the caller; partial private outputs can support resumption.
@@ -1120,6 +1120,5 @@ def run(
         logger=LOG,
     )
     outputs = build_module(cfg, active_runner)
-    with active_runner.run_context(started_at=runner_started):
-        active_runner.execute()
+    active_runner.execute_graph(started_at=runner_started)
     return outputs

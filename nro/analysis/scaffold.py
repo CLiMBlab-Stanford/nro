@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import yaml
 
-from nro.analysis.layout import API_VERSION, StudyError, check_study_name
+from nro.analysis.layout import API_VERSION, StudyError, check_study_name, run_git
 from nro.analysis.manifest import _ANALYSIS_NAME, SUPPORTED_SCOPES
 from nro.engine.paths import study_code_root, study_results_root
 
@@ -15,14 +14,6 @@ from nro.engine.paths import study_code_root, study_results_root
 def _module_name(study: str) -> str:
     name = "".join(character if character.isalnum() else "_" for character in study.lower())
     return f"{name if name[0].isalpha() else 's' + name}_common"
-
-
-def _git(repository: Path, *arguments: str) -> None:
-    result = subprocess.run(
-        ("git", "-C", str(repository), *arguments), capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
-        raise StudyError(f"git {' '.join(arguments)} failed: {result.stderr.strip()}")
 
 
 def init_study(study: str, *, projects: tuple[str, ...] = ()) -> Path:
@@ -61,10 +52,10 @@ analysis_api = {API_VERSION}
     )
     (repository / ".gitignore").write_text("__pycache__/\n*.pyc\n", encoding="utf-8")
     study_results_root(study).mkdir(parents=True, exist_ok=True)
-    _git(repository, "init", "--initial-branch=main", "--quiet")
-    _git(repository, "config", "receive.denyCurrentBranch", "updateInstead")
-    _git(repository, "add", "--all")
-    _git(repository, "commit", "--quiet", "--message", f"Initialize study {study}")
+    run_git(repository, "init", "--initial-branch=main", "--quiet")
+    run_git(repository, "config", "receive.denyCurrentBranch", "updateInstead")
+    run_git(repository, "add", "--all")
+    run_git(repository, "commit", "--quiet", "--message", f"Initialize study {study}")
     return repository
 
 

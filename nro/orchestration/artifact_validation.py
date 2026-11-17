@@ -7,18 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
 
 from nro.orchestration.registry import utcnow
-from nro.orchestration.sql_values import JSON_VALUES, json_values
+from nro.orchestration.sql_values import JSON_VALUES, chunks, json_values
 
-_QUERY_CHUNK_SIZE = 500
 _STAT_WORKERS = 32
-
-
-def _chunks(values: set[int]) -> tuple[tuple[int, ...], ...]:
-    ordered = tuple(sorted(values))
-    return tuple(
-        ordered[offset : offset + _QUERY_CHUNK_SIZE]
-        for offset in range(0, len(ordered), _QUERY_CHUNK_SIZE)
-    )
 
 
 def _stat(path: str) -> tuple[int, int] | None:
@@ -45,7 +36,7 @@ def assess_cached_artifacts(registry, work_item_ids: Iterable[int]) -> set[int]:
     artifacts: dict[int, list[dict]] = {}
     completed: set[int] = set()
     with registry.connection() as database:
-        for chunk in _chunks(selected):
+        for chunk in chunks(tuple(sorted(selected))):
             placeholders = JSON_VALUES
             chunk_values = (json_values(chunk),)
             for row in database.execute(

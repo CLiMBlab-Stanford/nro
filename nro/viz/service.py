@@ -220,7 +220,7 @@ def stop(root: Path) -> list[str]:
     return jobs
 
 
-def bind(root: Path, token: str, *, port: int | None, cache_bytes: int, restart):
+def bind(token: str, *, port: int | None, cache_bytes: int, restart):
     """Bind a server on the requested port, or on the first free stable port.
 
     Without an explicit port the server tries ``preferred_port()`` and the next
@@ -270,7 +270,7 @@ def serve(root: Path, *, port: int | None = None, memory_gb: int = 32, record: b
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     cache_bytes = int(memory_gb * 1024**3 * CACHE_FRACTION)
-    server = bind(root, token, port=port, cache_bytes=cache_bytes, restart=restart)
+    server = bind(token, port=port, cache_bytes=cache_bytes, restart=restart)
     signal.signal(signal.SIGUSR1, lambda *_: restart())
     signal.signal(signal.SIGTERM, terminate)
     bound = server.server_address[1]

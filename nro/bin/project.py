@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from nro.engine.cli import page_text
+from nro.engine.cli import confirm, page_text
 
 
 def build_parser(*, prog: str = "nro project") -> argparse.ArgumentParser:
@@ -59,14 +59,6 @@ def _render(result: dict) -> str:
     return "\n".join(lines)
 
 
-def _confirm() -> bool:
-    try:
-        response = input("Proceed with project rename? [y/N] ")
-    except (EOFError, KeyboardInterrupt):
-        return False
-    return response.strip().lower() in {"y", "yes"}
-
-
 def main(argv: list[str] | None = None, *, prog: str = "nro project") -> None:
     """Preview or execute project-level maintenance through the central scheduler."""
     args = build_parser(prog=prog).parse_args(argv)
@@ -112,7 +104,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro project") -> None:
             preparation=preview["preparation"],
         )
         return
-    if not args.force and not _confirm():
+    if not args.force and not confirm("Proceed with project rename?"):
         maintenance(
             Path(values["registry"]),
             Path(values["bids"]),

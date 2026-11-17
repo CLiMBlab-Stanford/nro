@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
-import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
-from nro.definitions.hardware import resolve_gradient_unwarping
 from nro.definitions.markup import active_source_markup
 from nro.definitions.runtime import SETTINGS
 from nro.engine.container import (
@@ -22,109 +19,50 @@ from nro.engine.container import (
 )
 from nro.engine.execution import (
     collect_bind_directories,
-    create_copy_file_step,
-    ensure_directory,
     neuroimaging_environment,
 )
-from nro.engine.gradient_unwarping import create_gradient_unwarping_step
 from nro.engine.io import (
-    read_json,
-    read_public_json,
     require_nonempty_file,
-    write_json,
-    write_public_json,
 )
-from nro.engine.manifests import create_json_step
-from nro.engine.neuroimaging import create_n4_bias_correction_step
 from nro.engine.paths import (
     anat_subject_dir,
     anat_subject_work_dir,
-    anatomical_manifest_path,
     module_derivatives_root,
     resolve_project_path,
     resolve_project_work_path,
 )
-from nro.engine.source_metadata import semantic_metadata_values
-from nro.engine.templates import find_fsaverage_template_surface
-from nro.modules.anat.contract import anatomical_output_contract, validate_anatomical_manifest
+from nro.modules.anat.construction import (
+    plan_fsaverage_registration,
+    plan_initialization,
+    plan_lesion_reconstruction_inputs,
+    plan_lesion_surfaces,
+    plan_mni_registration,
+    plan_pose_normalization,
+    plan_publication,
+    plan_reference_outputs,
+    plan_session_staging,
+    plan_subject_selection,
+    plan_surface_export,
+    plan_surface_reconstruction,
+    plan_template_transforms,
+)
+from nro.modules.anat.graph_policy import resolve_graph_policy
 from nro.modules.anat.inputs import (
     AnatImage,
     load_anat_image,
 )
+from nro.modules.anat.layout import AnatLayout
 from nro.orchestration.execution_context import ExecutionContext
-from nro.orchestration.runner import ContainerSpec, Runner, write_completion_breadcrumb
-from nro.orchestration.runner_graph import Step
-from nro.orchestration.runtime import selected_configuration_fingerprint
+from nro.orchestration.runner import ContainerSpec, Runner
 from nro.site.configuration import settings as site_settings
 
-from .constants import (
-    _FREESURFER_GRAY_MATTER_SEGMENTATIONS,
-    _FREESURFER_SUBCORTICAL_SEGMENTATIONS,
-)
-from .lesion_policy import (
-    BOUNDARY_MARGIN_MM,
-    MASKER_MODEL,
-    MASKER_REVISION,
-    PROBABILITY_THRESHOLD,
-    TEST_TIME_AUGMENTATION,
-    synthsr_scaffold_contract,
-)
-from .lesions import (
-    create_cut_surfaces_step,
-    create_lesion_excluded_mask_step,
-    create_lesion_mask_step,
-    create_lesion_qc_step,
-    create_lesion_reconstruction_summary_step,
-    create_synthetic_scaffold_metadata_step,
-    create_synthsr_scaffold_plan,
-)
 from .msmall import MsmAllCalibration, add_msmall_plan, resolve_msmall_calibration
 from .policy import (
     T1W_FALLBACK_DEFAULT,
-    bias_correction_contract,
-    surface_reconstruction_contract,
-    t1w_synthesis_contract,
-)
-from .reconstruction import (
-    SurfaceReconstructionInputs,
-    SurfaceReconstructionResources,
-    create_surface_reconstruction_plan,
 )
 from .steps import (
-    _aseg_label_ids,
-    _brain_extract_anat_copy,
-    _create_apply_brain_mask_step,
-    _create_copy_or_average_step,
-    _create_finalize_anatomy_step,
-    _create_inverse_affine_step,
-    _create_label_mask_step,
-    _create_metric_conversion_step,
-    _create_metric_structure_step,
-    _create_midthickness_step,
-    _create_mni_qc_image_step,
-    _create_mni_registration_step,
-    _create_mri_conversion_step,
-    _create_pose_grid_step,
-    _create_pose_inverse_step,
-    _create_pose_qc_step,
-    _create_pose_registration_step,
-    _create_pose_resampling_step,
-    _create_ribbon_mask_step,
-    _create_surface_affine_step,
-    _create_t1_to_fsnative_affine_step,
-    _create_transform_finalization_step,
-    _export_mgz,
-    _hemi_label,
-    _metric_names,
-    _nested_paths,
     _plan_session_anatomicals,
-    _register_t2_to_t1,
-    _resample_mask_to_native,
-    _strip_freesurfer_volgeom_metadata,
-    _surface_names,
-    _write_json_step,
 )
-from .t1w_synthesis import create_t1w_support_mask_step, create_t1w_synthesis_step
 
 LOG = logging.getLogger("anat")
 # Standard aseg identifiers from FreeSurferColorLUT.txt:
@@ -180,144 +118,21 @@ def build_module(
     The caller authorizes the context. Raw inputs stay in the shared BIDS tree;
     public outputs, session copies, FreeSurfer files, and work stay with the owner.
     """
-    if execution_context is not None:
-        if execution_context.project != opts.project:
-            raise ValueError("Anatomical project differs from its execution context")
-        opts = replace(
-            opts,
-            out_dir=execution_context.output_path(opts.out_dir),
-            work_dir=execution_context.output_path(opts.work_dir, private=True),
-            freesurfer_subjects_dir=execution_context.output_path(opts.freesurfer_subjects_dir),
-        )
-        for image in (*inputs.t1w, *inputs.t2w):
-            for path in (image.image, image.json):
-                if path is not None and (
-                    not path.absolute().is_relative_to(
-                        execution_context.paths.source_project(opts.project)
-                    )
-                    or execution_context.input_path(path) != path
-                ):
-                    raise ValueError("Anatomical acquisitions must be shared source inputs")
-        if opts.msmall is not None:
-            for path in opts.msmall.input_paths:
-                if (
-                    not path.absolute().is_relative_to(
-                        execution_context.paths.source_project(opts.project)
-                    )
-                    or execution_context.input_path(path) != path
-                ):
-                    raise ValueError("MSMAll calibration files must be shared source inputs")
-    all_images = [*inputs.t1w, *inputs.t2w]
-    if not all_images:
-        raise SystemExit(f"No anatomical images provided for {inputs.sub_id}.")
-    if opts.synthstrip_image is None:
-        raise SystemExit("Missing SynthStrip image path.")
-    require_nonempty_file(opts.synthstrip_image, "SynthStrip image")
-    if opts.surface_reconstruction_engine not in {"freesurfer", "fastsurfer"}:
-        raise SystemExit(
-            f"Unsupported surface-reconstruction engine: {opts.surface_reconstruction_engine}"
-        )
-    if opts.t1w_fallback not in {"synthesize_from_t2w", "skip"}:
-        raise SystemExit(f"Unsupported T1w fallback policy: {opts.t1w_fallback}")
-    synthetic_t1w = not inputs.t1w and bool(inputs.t2w)
-    if synthetic_t1w and opts.t1w_fallback == "skip":
-        raise SystemExit("No non-excluded T1w image is available and T1w fallback is disabled.")
-    if synthetic_t1w and opts.lesion:
-        raise SystemExit("Lesion-aware anatomy requires an acquired T1w image.")
-    if opts.surface_reconstruction_engine == "freesurfer" or synthetic_t1w or opts.lesion:
-        if opts.freesurfer_image is None:
-            raise SystemExit("Missing FreeSurfer container path.")
-        require_nonempty_file(opts.freesurfer_image, "FreeSurfer container")
-    if opts.lesion:
-        if not inputs.t1w:
-            raise SystemExit("Lesion-aware anatomy requires at least one T1w image.")
-        if opts.lesion_masker_command is None:
-            lesion_masker_command = Path(sys.executable)
-            lesion_masker_module = "nro.modules.anat.synthstroke"
-            if opts.synthstroke_data is None:
-                raise SystemExit("Lesion-aware anatomy requires installed SynthStroke data.")
-            for name in ("config.json", "model.safetensors"):
-                require_nonempty_file(
-                    opts.synthstroke_data / name,
-                    f"SynthStroke resource {name}",
-                )
-            synthstroke_data = opts.synthstroke_data
-        else:
-            lesion_masker_command = opts.lesion_masker_command
-            lesion_masker_module = None
-            require_nonempty_file(lesion_masker_command, "lesion masker command")
-            synthstroke_data = None
-    else:
-        lesion_masker_command = None
-        lesion_masker_module = None
-        synthstroke_data = None
-        if opts.surface_reconstruction_engine == "fastsurfer":
-            if opts.fastsurfer_image is None:
-                raise SystemExit("FastSurfer reconstruction requires a configured image.")
-            require_nonempty_file(opts.fastsurfer_image, "FastSurfer image")
-    if opts.msmall is not None:
-        if opts.lesion:
-            raise SystemExit("MSMAll calibration is not supported for lesion-aware anatomy.")
-        if opts.surface_reconstruction_engine != "freesurfer":
-            raise SystemExit("MSMAll calibration currently requires FreeSurfer reconstruction.")
-        if synthetic_t1w:
-            raise SystemExit("MSMAll calibration requires an acquired T1w image.")
-    require_nonempty_file(opts.mni_template, "MNI template")
-    mni_brain_template = Path(
-        str(opts.mni_template).replace("_T1w.nii.gz", "_desc-brain_T1w.nii.gz")
-    )
-    mni_brain_mask = Path(str(opts.mni_template).replace("_T1w.nii.gz", "_desc-brain_mask.nii.gz"))
-    require_nonempty_file(mni_brain_template, "MNI brain template")
-    require_nonempty_file(mni_brain_mask, "MNI brain mask")
-
-    gradient_resolutions = {
-        image.image: resolve_gradient_unwarping(
-            image.metadata,
-            mode=opts.gradient_unwarping,
-        )
-        for image in all_images
-    }
-    if any(resolution.applied for resolution in gradient_resolutions.values()):
-        require_nonempty_file(opts.gradient_unwarp_image, "gradient-unwarping image")
-
-    public_inputs = [item.image for item in all_images]
-    if opts.msmall is not None:
-        public_inputs.extend(opts.msmall.input_paths)
-    public_inputs = list(dict.fromkeys(public_inputs))
+    policy = resolve_graph_policy(inputs, opts, execution_context=execution_context)
+    opts = policy.opts
+    all_images = list(policy.all_images)
+    synthetic_t1w = policy.synthetic_t1w
+    lesion_masker_command = policy.lesion_masker_command
+    lesion_masker_module = policy.lesion_masker_module
+    synthstroke_data = policy.synthstroke_data
+    mni_brain_template = policy.mni_brain_template
+    mni_brain_mask = policy.mni_brain_mask
+    gradient_resolutions = policy.gradient_resolutions
+    public_inputs = list(policy.public_inputs)
+    layout = AnatLayout.for_options(opts, inputs.sub_id)
     env = neuroimaging_environment(subjects_dir=opts.freesurfer_subjects_dir)
     require_nonempty_file(Path(env["FS_LICENSE"]), "FreeSurfer license")
-    binds = collect_bind_directories(
-        [
-            *(item.image for item in all_images),
-            *(item.image.resolve() for item in all_images),
-            *(item.json for item in all_images if item.json is not None),
-            opts.out_dir,
-            opts.work_dir,
-            opts.freesurfer_subjects_dir,
-            opts.mni_template,
-            mni_brain_template,
-            mni_brain_mask,
-            opts.gradient_unwarp_image
-            if any(resolution.applied for resolution in gradient_resolutions.values())
-            else None,
-            *(resolution.coefficients for resolution in gradient_resolutions.values()),
-            Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
-            lesion_masker_command,
-            synthstroke_data,
-            opts.freesurfer_image
-            if opts.surface_reconstruction_engine == "freesurfer" or synthetic_t1w or opts.lesion
-            else None,
-            opts.fastsurfer_image if opts.surface_reconstruction_engine == "fastsurfer" else None,
-            *(opts.msmall.input_paths if opts.msmall is not None else ()),
-            Path(__file__).with_name("msmall_driver.sh") if opts.msmall is not None else None,
-            Path(__file__).with_name("msmall_validate_atlas.py")
-            if opts.msmall is not None
-            else None,
-            Path(__file__).with_name("msmall_validate_subcortical.py")
-            if opts.msmall is not None
-            else None,
-        ]
-    )
+    binds = collect_bind_directories(policy.bind_candidates(env))
     runner = Runner(
         module_name="Anatomical Module",
         container=bind_container_to_execution(opts.container, execution_context),
@@ -325,7 +140,6 @@ def build_module(
         logger=LOG,
         execution_context=execution_context,
     )
-    initialized = opts.work_dir / "initialized.complete"
     derivative_root = module_derivatives_root(
         "anat",
         opts.anat_id,
@@ -335,100 +149,14 @@ def build_module(
     if execution_context is not None:
         derivative_root = execution_context.output_path(derivative_root)
 
-    def initialize_outputs() -> None:
-        ensure_directory(derivative_root)
-        ensure_directory(opts.out_dir)
-        ensure_directory(opts.work_dir)
-        ensure_directory(opts.freesurfer_subjects_dir)
-        write_completion_breadcrumb(initialized, "Anatomical output initialized\n")
-
-    runner.add_step(
-        Step.python(
-            name="Initialize Anatomical Outputs",
-            outputs=(initialized,),
-            action=initialize_outputs,
-        )
+    initialization = plan_initialization(
+        opts=opts,
+        layout=layout,
+        synthetic_t1w=synthetic_t1w,
+        derivative_root=derivative_root,
+        require_commands=runner.require_cmds,
     )
-
-    configuration = {
-        "selection_strategy": opts.selection_strategy,
-        "surface_reconstruction_engine": opts.surface_reconstruction_engine,
-        "gradient_unwarping": opts.gradient_unwarping,
-        "fs_subject": opts.fs_subject,
-        "mni_template": str(opts.mni_template),
-        "synthstrip_image": str(opts.synthstrip_image),
-    }
-    synthetic_t1w_mask: Optional[Path] = None
-    if synthetic_t1w:
-        configuration["t1w_fallback"] = opts.t1w_fallback
-    if opts.lesion:
-        configuration["lesion"] = {
-            "enabled": opts.lesion,
-            "masker_model": MASKER_MODEL,
-            "masker_revision": MASKER_REVISION,
-            "probability_threshold": PROBABILITY_THRESHOLD,
-            "test_time_augmentation": TEST_TIME_AUGMENTATION,
-            "scaffold_synthesis": synthsr_scaffold_contract(),
-            "boundary_margin_mm": BOUNDARY_MARGIN_MM,
-        }
-    configuration_snapshot = opts.work_dir / "configuration.json"
-
-    def validate_configuration() -> tuple[bool, str]:
-        try:
-            current = read_json(configuration_snapshot)
-        except (OSError, ValueError, TypeError):
-            return False, "Anatomical configuration snapshot is missing or unreadable."
-        # Snapshots created before surface backends were configurable used
-        # FreeSurfer implicitly. Preserve that meaning without rewriting the
-        # private record.
-        current.setdefault("surface_reconstruction_engine", "freesurfer")
-        # Only settings that govern the core anatomical steps belong to this
-        # comparison. Other preprocessing settings must not invalidate them.
-        effective = {key: current.get(key) for key in configuration}
-        if effective != configuration:
-            return False, "Anatomical configuration changed."
-        return True, "Anatomical configuration is unchanged."
-
-    runner.add_step(
-        Step.python(
-            name="Write Anatomical Configuration",
-            outputs=(configuration_snapshot,),
-            inputs=(initialized,),
-            force=opts.overwrite,
-            action=lambda: write_json(configuration_snapshot, configuration),
-            validate=validate_configuration,
-        )
-    )
-
-    dependency_check = opts.work_dir / "dependencies.complete"
-
-    def check_dependencies() -> None:
-        commands = [
-            "mri_binarize",
-            "mri_convert",
-            "mri_vol2vol",
-            "mri_robust_template",
-            "N4BiasFieldCorrection",
-            "mris_convert",
-            "flirt",
-            "fslmaths",
-            "wb_command",
-            "tkregister2",
-            "convert_xfm",
-            "antsRegistration",
-            "antsApplyTransforms",
-        ]
-        runner.require_cmds(commands)
-        write_completion_breadcrumb(dependency_check, "Anatomical dependencies available\n")
-
-    runner.add_step(
-        Step.python(
-            name="Check Anatomical Dependencies",
-            outputs=(dependency_check,),
-            action=check_dependencies,
-            force=opts.overwrite,
-        )
-    )
+    runner.add_steps(initialization.steps)
 
     session_plans = _plan_session_anatomicals(
         images=all_images,
@@ -437,1237 +165,157 @@ def build_module(
         sub_id=inputs.sub_id,
         execution_context=execution_context,
     )
-    gradient_corrected_sources: dict[Path, Path] = {}
-    for plan in session_plans:
-        runner.add_step(
-            create_copy_file_step(
-                src=plan.source.image,
-                dst=plan.staged_raw,
-                force=opts.overwrite,
-                step_name="Stage Session Anatomical Image",
-            )
-        )
-        gradient_resolution = gradient_resolutions[plan.source.image]
-        n4_input = plan.staged_raw
-        if gradient_resolution.applied:
-            gradient_dir = plan.staged_raw.parent / "gradient_unwarping"
-            n4_input = gradient_dir / plan.staged_raw.name
-            gradient_warp = gradient_dir / (
-                plan.staged_raw.name.removesuffix(".nii.gz").removesuffix(".nii") + "_warp.nii.gz"
-            )
-            gradient_metadata = gradient_dir / (
-                plan.staged_raw.name.removesuffix(".nii.gz").removesuffix(".nii") + ".json"
-            )
-            runner.add_step(
-                create_gradient_unwarping_step(
-                    run_child=runner.run_child,
-                    source=plan.staged_raw,
-                    corrected=n4_input,
-                    warp=gradient_warp,
-                    metadata=gradient_metadata,
-                    resolution=gradient_resolution,
-                    runtime=opts.container_runtime,
-                    image=opts.gradient_unwarp_image,
-                    force=opts.overwrite,
-                )
-            )
-        gradient_corrected_sources[plan.source.image] = n4_input
-        plan.metadata["GradientDistortionCorrection"] = gradient_resolution.scientific_record()
-        preliminary_brain = plan.staged_preprocessed.with_name(
-            plan.staged_preprocessed.name.replace("_desc-preproc_", "_desc-preN4Brain_")
-        )
-        bias_field = plan.staged_preprocessed.with_name(
-            plan.staged_preprocessed.name.replace("_desc-preproc_", "_desc-biasField_")
-        )
-        runner.add_step(
-            _brain_extract_anat_copy(
-                opts.container_runtime,
-                opts.synthstrip_image,
-                env=env,
-                source=n4_input,
-                dst=preliminary_brain,
-                mask=plan.mask,
-                force=opts.overwrite,
-            )
-        )
-        runner.add_step(
-            create_n4_bias_correction_step(
-                env=env,
-                in_img=n4_input,
-                out_img=plan.staged_preprocessed,
-                mask=plan.mask,
-                bias_field=bias_field,
-                force=opts.overwrite,
-                validate_gzip=True,
-                step_name="N4 Bias Field Correction",
-            )
-        )
-        plan.metadata["BiasCorrectionMask"] = str(plan.mask)
-    for plan in session_plans:
-        runner.add_step(
-            _create_apply_brain_mask_step(
-                source=plan.staged_preprocessed,
-                mask=plan.mask,
-                output=plan.output,
-                env=env,
-                force=opts.overwrite,
-            )
-        )
-        runner.add_step(
-            create_json_step(
-                step_name="Write Session Anatomical Metadata",
-                path=plan.metadata_output,
-                payload=plan.metadata,
-                inputs=(plan.staged_preprocessed, plan.output, plan.mask),
-                force=opts.overwrite,
-                identity_payload={
-                    **semantic_metadata_values(plan.metadata, module="anat"),
-                    **{
-                        key: plan.metadata[key]
-                        for key in (
-                            "Sources",
-                            "BiasCorrection",
-                            "GradientDistortionCorrection",
-                            "BiasCorrectionMask",
-                            "BrainExtraction",
-                            "BrainMask",
-                        )
-                        if key in plan.metadata
-                    },
-                },
-            )
-        )
-    copied_images = [
-        AnatImage(
-            image=plan.output,
-            json=plan.metadata_output,
-            modality=plan.source.modality,
-            entities=dict(plan.source.entities),
-            session_id=plan.source.session_id,
-            time_kind=plan.source.time_kind,
-            time_value=plan.source.time_value,
-        )
-        for plan in session_plans
-    ]
-    copied_session_files = [str(plan.output) for plan in session_plans]
-    copied_t1 = [item for item in copied_images if item.modality == "T1w"]
-    copied_t2 = [item for item in copied_images if item.modality == "T2w"]
-    gradient_corrected_t1 = [
-        AnatImage(
-            image=gradient_corrected_sources[plan.source.image],
-            json=plan.source.json,
-            modality="T1w",
-            entities=dict(plan.source.entities),
-            session_id=plan.source.session_id,
-            time_kind=plan.source.time_kind,
-            time_value=plan.source.time_value,
-        )
-        for plan in session_plans
-        if plan.source.modality == "T1w"
-    ]
-    reference_work = opts.work_dir / "subject_reference"
-    subj_t1_selected = (
-        reference_work / f"{inputs.sub_id}_desc-selected_T1w.nii.gz" if copied_t1 else None
-    )
-    subj_t2_selected = (
-        reference_work / f"{inputs.sub_id}_desc-selected_T2w.nii.gz" if copied_t2 else None
-    )
-    t1_meta: dict[str, object] = {
-        "modality": "T1w",
-        "sources": [],
-        "strategy": opts.selection_strategy,
-    }
-    lesion_bias_corrected_t1_selected: Optional[Path] = None
-    lesion_raw_t1_selected: Optional[Path] = None
-    lesion_selected_t1_mask: Optional[Path] = None
-    if subj_t1_selected is not None:
-        if opts.lesion:
-            lesion_raw_t1_selected = reference_work / f"{inputs.sub_id}_desc-selectedRaw_T1w.nii.gz"
-            lesion_bias_corrected_t1_selected = (
-                reference_work / f"{inputs.sub_id}_desc-selectedBiasCorrected_T1w.nii.gz"
-            )
-            source_t1_step, t1_meta = _create_copy_or_average_step(
-                env=env,
-                images=gradient_corrected_t1,
-                modality="T1w",
-                strategy=opts.selection_strategy,
-                out_img=lesion_raw_t1_selected,
-                work_dir=opts.work_dir,
-                force=opts.overwrite,
-            )
-            t1_meta["sources"] = [
-                str(plan.source.image) for plan in session_plans if plan.source.modality == "T1w"
-            ]
-            runner.add_step(source_t1_step)
-            lesion_selected_t1_mask = (
-                reference_work / f"{inputs.sub_id}_desc-selectedT1w_mask.nii.gz"
-            )
-            lesion_preliminary_brain = (
-                reference_work / f"{inputs.sub_id}_desc-selectedPreN4Brain_T1w.nii.gz"
-            )
-            lesion_bias_field = (
-                reference_work / f"{inputs.sub_id}_desc-selectedBiasField_T1w.nii.gz"
-            )
-            runner.add_step(
-                _brain_extract_anat_copy(
-                    opts.container_runtime,
-                    opts.synthstrip_image,
-                    env=env,
-                    source=lesion_raw_t1_selected,
-                    dst=lesion_preliminary_brain,
-                    mask=lesion_selected_t1_mask,
-                    force=opts.overwrite,
-                )
-            )
-            runner.add_step(
-                create_n4_bias_correction_step(
-                    env=env,
-                    in_img=lesion_raw_t1_selected,
-                    out_img=lesion_bias_corrected_t1_selected,
-                    mask=lesion_selected_t1_mask,
-                    bias_field=lesion_bias_field,
-                    force=opts.overwrite,
-                    validate_gzip=True,
-                    step_name="Bias Correct Selected Source T1w",
-                )
-            )
-            runner.add_step(
-                _create_apply_brain_mask_step(
-                    source=lesion_bias_corrected_t1_selected,
-                    mask=lesion_selected_t1_mask,
-                    output=subj_t1_selected,
-                    env=env,
-                    force=opts.overwrite,
-                )
-            )
-        else:
-            t1_step, t1_meta = _create_copy_or_average_step(
-                env=env,
-                images=copied_t1,
-                modality="T1w",
-                strategy=opts.selection_strategy,
-                out_img=subj_t1_selected,
-                work_dir=opts.work_dir,
-                force=opts.overwrite,
-            )
-            runner.add_step(t1_step)
-    t2_meta: dict[str, object] = {
-        "modality": "T2w",
-        "sources": [],
-        "strategy": opts.selection_strategy,
-    }
-    if subj_t2_selected is not None:
-        t2_step, t2_meta = _create_copy_or_average_step(
-            env=env,
-            images=copied_t2,
-            modality="T2w",
-            strategy=opts.selection_strategy,
-            out_img=subj_t2_selected,
-            work_dir=opts.work_dir,
-            force=opts.overwrite,
-        )
-        runner.add_step(t2_step)
-
-    if synthetic_t1w:
-        assert subj_t2_selected is not None
-        assert opts.freesurfer_image is not None
-        fs_license = Path(env["FS_LICENSE"])
-        require_nonempty_file(fs_license, "FreeSurfer license")
-        subj_t1_selected = reference_work / f"{inputs.sub_id}_desc-synthetic_T1w.nii.gz"
-        runner.add_step(
-            create_t1w_synthesis_step(
-                run_child=runner.run_child,
-                runtime=opts.container_runtime,
-                image=opts.freesurfer_image,
-                license_file=fs_license,
-                t2w=subj_t2_selected,
-                output=subj_t1_selected,
-                threads=max(1, int(env.get("OMP_NUM_THREADS", "1"))),
-                env=env,
-                force=opts.overwrite,
-            )
-        )
-        synthetic_t1w_mask = reference_work / f"{inputs.sub_id}_desc-selectedT1w_mask.nii.gz"
-        runner.add_step(
-            create_t1w_support_mask_step(
-                t2w=subj_t2_selected,
-                synthetic_t1w=subj_t1_selected,
-                output=synthetic_t1w_mask,
-                force=opts.overwrite,
-            )
-        )
-        t1_meta = {
-            "modality": "T1w",
-            "sources": list(t2_meta["sources"]),
-            "strategy": "synthesize_from_t2w",
-        }
-
-    pose_source = lesion_bias_corrected_t1_selected or subj_t1_selected or subj_t2_selected
-    if pose_source is None:
-        raise SystemExit("No subject-level anatomical image available after selection.")
-    pose_modality = "T1w" if subj_t1_selected is not None else "T2w"
-    pose_mask = (
-        lesion_selected_t1_mask
-        or synthetic_t1w_mask
-        or (reference_work / f"{inputs.sub_id}_desc-selected{pose_modality}_mask.nii.gz")
-    )
-    if lesion_selected_t1_mask is None and synthetic_t1w_mask is None:
-        runner.add_step(
-            Step.command_step(
-                ["fslmaths", str(pose_source), "-bin", str(pose_mask)],
-                name="Construct Preliminary Anatomical Mask",
-                outputs=(pose_mask,),
-                inputs=(pose_source,),
-                force=opts.overwrite,
-                env=env,
-            )
-        )
-    reference_space = pose_modality
-    pose_work = opts.work_dir / "pose_normalization"
-    pose_prefix = pose_work / f"{inputs.sub_id}_"
-    source_to_reference = pose_work / f"{inputs.sub_id}_0GenericAffine.mat"
-    reference_to_source = (
-        opts.out_dir / f"{inputs.sub_id}_from-{reference_space}_to-orig_mode-image_xfm.mat"
-    )
-    published_source_to_reference = (
-        opts.out_dir / f"{inputs.sub_id}_from-orig_to-{reference_space}_mode-image_xfm.mat"
-    )
-    reference_grid = pose_work / f"{inputs.sub_id}_space-{reference_space}_reference.nii.gz"
-    runner.add_step(
-        _create_pose_registration_step(
-            source=pose_source,
-            source_mask=pose_mask,
-            template=mni_brain_template,
-            template_mask=mni_brain_mask,
-            prefix=pose_prefix,
-            transform=source_to_reference,
-            env=env,
-            force=opts.overwrite,
-        )
-    )
-    runner.add_step(
-        _create_pose_grid_step(
-            source=pose_source,
-            source_mask=pose_mask,
-            template=opts.mni_template,
-            transform=source_to_reference,
-            output=reference_grid,
-            force=opts.overwrite,
-        )
-    )
-    runner.add_step(
-        create_copy_file_step(
-            src=source_to_reference,
-            dst=published_source_to_reference,
-            force=opts.overwrite,
-            step_name="Publish Anatomical Pose Transform",
-        )
-    )
-    runner.add_step(
-        _create_pose_inverse_step(
-            source=source_to_reference,
-            output=reference_to_source,
-            force=opts.overwrite,
-        )
-    )
-    subj_t1 = (
-        opts.out_dir / f"{inputs.sub_id}_desc-preproc_T1w.nii.gz"
-        if subj_t1_selected is not None
-        else None
-    )
-    subj_t2 = (
-        opts.out_dir
-        / (
-            f"{inputs.sub_id}_space-T1w_desc-preproc_T2w.nii.gz"
-            if subj_t1_selected is not None
-            else f"{inputs.sub_id}_desc-preproc_T2w.nii.gz"
-        )
-        if subj_t2_selected is not None
-        else None
-    )
-    pose_output = subj_t1 or subj_t2
-    assert pose_output is not None
-    pose_resampled = (
-        pose_work / f"{inputs.sub_id}_space-{reference_space}_desc-resampled_{pose_modality}.nii.gz"
-    )
-    reference_mask = pose_work / f"{inputs.sub_id}_space-{reference_space}_desc-brain_mask.nii.gz"
-    runner.add_step(
-        _create_pose_resampling_step(
-            source=pose_source,
-            reference=reference_grid,
-            transform=source_to_reference,
-            output=pose_resampled,
-            env=env,
-            force=opts.overwrite,
-        )
-    )
-    runner.add_step(
-        _create_pose_resampling_step(
-            source=pose_mask,
-            reference=reference_grid,
-            transform=source_to_reference,
-            output=reference_mask,
-            env=env,
-            force=opts.overwrite,
-            label=True,
-        )
-    )
-    runner.add_step(
-        _create_finalize_anatomy_step(
-            source=pose_resampled,
-            mask=reference_mask,
-            output=pose_output,
-            env=env,
-            force=opts.overwrite,
-        )
-    )
-    lesion_synthsr_input: Optional[Path] = None
-    if opts.lesion:
-        assert lesion_raw_t1_selected is not None
-        lesion_synthsr_input = reference_work / f"{inputs.sub_id}_desc-synthsrInput_T1w.nii.gz"
-        runner.add_step(
-            _create_pose_resampling_step(
-                source=lesion_raw_t1_selected,
-                reference=reference_grid,
-                transform=source_to_reference,
-                output=lesion_synthsr_input,
-                env=env,
-                force=opts.overwrite,
-            )
-        )
-    pose_qc = opts.out_dir / f"{inputs.sub_id}_space-{reference_space}_desc-poseQC_metrics.json"
-    runner.add_step(
-        _create_pose_qc_step(
-            source=pose_source,
-            source_mask=pose_mask,
-            aligned=pose_output,
-            template=opts.mni_template,
-            transform=source_to_reference,
-            grid=reference_grid,
-            output=pose_qc,
-            force=opts.overwrite,
-        )
-    )
-    pose_xfms = {
-        f"orig_to_{reference_space.lower()}": str(published_source_to_reference),
-        f"{reference_space.lower()}_to_orig": str(reference_to_source),
-    }
-    t2w_to_t1w_xfms: dict[str, str] = {}
-    t2w_to_t1w: Optional[Path] = None
-    if subj_t1 is not None and subj_t2 is not None:
-        assert subj_t2_selected is not None
-        t2w_to_t1w = opts.out_dir / f"{inputs.sub_id}_from-T2w_to-T1w_mode-image_xfm.mat"
-        t1w_to_t2w = opts.out_dir / f"{inputs.sub_id}_from-T1w_to-T2w_mode-image_xfm.mat"
-        runner.add_step(
-            _register_t2_to_t1(
-                env=env,
-                t2_src=subj_t2_selected,
-                t1_ref=subj_t1,
-                out_t2=subj_t2,
-                out_mat=t2w_to_t1w,
-                force=opts.overwrite,
-            )
-        )
-        runner.add_step(
-            _create_inverse_affine_step(
-                source=t2w_to_t1w,
-                output=t1w_to_t2w,
-                env=env,
-                force=opts.overwrite,
-                name="Invert T2w-to-T1w Affine",
-            )
-        )
-        t2w_to_t1w_xfms.update(
-            t2w_to_t1w=str(t2w_to_t1w),
-            t1w_to_t2w=str(t1w_to_t2w),
-        )
-    if subj_t1 is not None:
-        runner.add_step(
-            create_json_step(
-                step_name="Write Subject T1w Metadata",
-                path=subj_t1.with_suffix("").with_suffix(".json"),
-                payload={
-                    "Sources": t1_meta["sources"],
-                    "SelectionStrategy": opts.selection_strategy,
-                    "BiasCorrection": "N4BiasFieldCorrection",
-                    "SpatialReference": "T1w",
-                    "PoseTransform": str(published_source_to_reference),
-                    "PoseQuality": str(pose_qc),
-                    **(
-                        {
-                            "Synthetic": True,
-                            "SourceContrast": "T2w",
-                            "Synthesis": t1w_synthesis_contract(),
-                        }
-                        if synthetic_t1w
-                        else {}
-                    ),
-                },
-                inputs=(subj_t1, published_source_to_reference, pose_qc),
-                force=opts.overwrite,
-            )
-        )
-    if subj_t2 is not None:
-        runner.add_step(
-            create_json_step(
-                step_name="Write Subject T2w Metadata",
-                path=subj_t2.with_suffix("").with_suffix(".json"),
-                payload={
-                    "Sources": t2_meta["sources"],
-                    "SelectionStrategy": opts.selection_strategy,
-                    "BiasCorrection": "N4BiasFieldCorrection",
-                    "SpatialReference": "T1w",
-                    "TransformToT1w": str(t2w_to_t1w)
-                    if t2w_to_t1w is not None
-                    else str(published_source_to_reference),
-                    "PoseQuality": str(pose_qc),
-                },
-                inputs=tuple(path for path in (subj_t2, t2w_to_t1w, pose_qc) if path is not None),
-                force=opts.overwrite,
-            )
-        )
-    myelin_map: Optional[Path] = None
-    if subj_t1 is not None and subj_t2 is not None and not synthetic_t1w:
-        myelin_map = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-myelinMap_T1w.nii.gz"
-        t2_nonzero = opts.work_dir / "myelin_map" / f"{inputs.sub_id}_desc-T2wNonzero_T2w.nii.gz"
-        runner.add_step(
-            Step.command_step(
-                ["fslmaths", str(subj_t2), "-thr", "0.001", str(t2_nonzero)],
-                name="Prepare Nonzero T2w for Myelin Map",
-                outputs=(t2_nonzero,),
-                inputs=(subj_t2,),
-                force=opts.overwrite,
-                env=env,
-                prepare=lambda: t2_nonzero.parent.mkdir(parents=True, exist_ok=True),
-            )
-        )
-        runner.add_step(
-            Step.command_step(
-                ["fslmaths", str(subj_t1), "-div", str(t2_nonzero), str(myelin_map)],
-                name="Compute T1w/T2w Myelin Map",
-                outputs=(myelin_map,),
-                inputs=(subj_t1, subj_t2, t2_nonzero),
-                force=opts.overwrite,
-                env=env,
-            )
-        )
-        runner.add_step(
-            _write_json_step(
-                myelin_map.with_suffix("").with_suffix(".json"),
-                {
-                    "Type": "myelin map",
-                    "Space": "T1w",
-                    "Sources": [str(subj_t1), str(subj_t2)],
-                    "Description": "T1w/T2w ratio using preprocessed images aligned on the participant T1w grid.",
-                },
-            )
-        )
-
-    subject_anat = pose_output
-
-    subject_dir = opts.freesurfer_subjects_dir / opts.fs_subject
-    lesion_mask: Optional[Path] = None
-    lesion_probability: Optional[Path] = None
-    lesion_metadata: Optional[Path] = None
-    lesion_qc: Optional[Path] = None
-    synthetic_scaffold_t1: Optional[Path] = None
-    lesion_reconstruction_summary: Optional[Path] = None
-    reconstruction_t1 = subj_t1
-    reconstruction_t2 = subj_t2
-    reconstruction_mask = reference_mask
-    if opts.lesion:
-        assert subj_t1 is not None
-        assert lesion_synthsr_input is not None
-        assert lesion_masker_command is not None
-        assert opts.freesurfer_image is not None
-        lesion_mask = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesion_mask.nii.gz"
-        lesion_probability = (
-            opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesion_probability.nii.gz"
-        )
-        lesion_metadata = lesion_mask.with_suffix("").with_suffix(".json")
-        runner.add_step(
-            create_lesion_mask_step(
-                run_child=runner.run_child,
-                command=lesion_masker_command,
-                module=lesion_masker_module,
-                source=subj_t1,
-                probability=lesion_probability,
-                mask=lesion_mask,
-                metadata=lesion_metadata,
-                model_directory=synthstroke_data,
-                model=MASKER_MODEL,
-                revision=MASKER_REVISION,
-                threshold=PROBABILITY_THRESHOLD,
-                test_time_augmentation=TEST_TIME_AUGMENTATION,
-                use_gpu=False,
-                force=opts.overwrite,
-            )
-        )
-        lesion_qc = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesionQC.png"
-        runner.add_step(
-            create_lesion_qc_step(
-                source=subj_t1,
-                mask=lesion_mask,
-                output=lesion_qc,
-                force=opts.overwrite,
-            )
-        )
-        scaffold = create_synthsr_scaffold_plan(
-            run_child=runner.run_child,
-            runtime=opts.container_runtime,
-            image=opts.freesurfer_image,
-            license_file=Path(env["FS_LICENSE"]),
-            t1w=lesion_synthsr_input,
-            output=opts.work_dir / "lesion_synthsr" / f"{inputs.sub_id}_desc-synthsr_T1w.nii.gz",
-            threads=max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "2"))),
-            env=env,
-            force=opts.overwrite,
-        )
-        runner.add_step(scaffold.step)
-        reconstruction_t1 = scaffold.image
-        reconstruction_t2 = None
-        reconstruction_mask = reference_mask
-        synthetic_scaffold_t1 = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-synthsr_T1w.nii.gz"
-        runner.add_step(
-            create_copy_file_step(
-                src=scaffold.image,
-                dst=synthetic_scaffold_t1,
-                force=opts.overwrite,
-                step_name="Publish SynthSR Anatomical Alternative",
-                parameters={
-                    "method": synthsr_scaffold_contract(),
-                    "synthetic_tissue": True,
-                },
-            )
-        )
-        runner.add_step(
-            create_synthetic_scaffold_metadata_step(
-                image=synthetic_scaffold_t1,
-                source_t1w=lesion_raw_t1_selected,
-                synthesis_input=lesion_synthsr_input,
-                output=synthetic_scaffold_t1.with_suffix("").with_suffix(".json"),
-                force=opts.overwrite,
-            )
-        )
-    reconstruction = create_surface_reconstruction_plan(
-        engine=opts.surface_reconstruction_engine,
-        inputs=SurfaceReconstructionInputs(
-            t1w=reconstruction_t1,
-            t2w=reconstruction_t2,
-            brain_mask=reconstruction_mask,
-        ),
-        resources=SurfaceReconstructionResources(
-            runtime=opts.container_runtime,
-            freesurfer_image=opts.freesurfer_image,
-            fastsurfer_image=opts.fastsurfer_image,
-            license_file=Path(env["FS_LICENSE"]),
-            subjects_dir=opts.freesurfer_subjects_dir,
-            template_root=(derivative_root.parents[1] / ".nro/templates/freesurfer"),
-            staging_subjects_dir=opts.work_dir / "fastsurfer-segmentation",
-            subject=opts.fs_subject,
-            cpu_threads=max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "2"))),
-        ),
-        run_child=runner.run_child,
+    session_staging = plan_session_staging(
+        opts=opts,
+        session_plans=session_plans,
+        gradient_resolutions=gradient_resolutions,
         env=env,
-        force=opts.overwrite,
+        run_child=runner.run_child,
     )
-    runner.add_steps(reconstruction.steps)
-    if reconstruction.products.subject_dir != subject_dir:
-        raise RuntimeError("Surface reconstruction returned an unexpected subject directory")
-    if opts.lesion:
-        assert lesion_mask is not None
-        lesion_reconstruction_summary = (
-            opts.out_dir / f"{inputs.sub_id}_desc-lesionReconstruction_summary.yaml"
-        )
-        runner.add_step(
-            create_lesion_reconstruction_summary_step(
-                subject_dir=subject_dir,
-                lesion_mask=lesion_mask,
-                scaffold_image=synthetic_scaffold_t1,
-                scaffold_synthesis=synthsr_scaffold_contract(),
-                surface_reconstruction=surface_reconstruction_contract(
-                    opts.surface_reconstruction_engine
-                ),
-                output=lesion_reconstruction_summary,
-                force=opts.overwrite,
-            )
-        )
-    aseg_mgz = subject_dir / "mri" / "aseg.mgz"
-    subcortical_masks: dict[str, str] = {}
-    for structure, segmentations in _FREESURFER_SUBCORTICAL_SEGMENTATIONS.items():
-        labels = _aseg_label_ids(segmentations)
-        output = opts.out_dir / f"{inputs.sub_id}_desc-{structure}_mask.nii.gz"
-        temporary = (
-            opts.work_dir
-            / "subcortical_masks"
-            / (f"{inputs.sub_id}_desc-{structure}_mask_fs.nii.gz")
-        )
-        resampled = (
-            opts.work_dir
-            / "subcortical_masks"
-            / f"{inputs.sub_id}_desc-{structure}_mask_scaffold.nii.gz"
-            if opts.lesion
-            else output
-        )
-        runner.add_step(
-            _create_label_mask_step(
-                source=aseg_mgz,
-                output=temporary,
-                labels=labels,
-                name=f"Extract {structure} FreeSurfer Labels",
-                env=env,
-                force=opts.overwrite,
-            )
-        )
-        runner.add_step(
-            _resample_mask_to_native(
-                env=env,
-                src=temporary,
-                ref_image=subject_anat,
-                dst=resampled,
-                force=opts.overwrite,
-            )
-        )
-        if opts.lesion:
-            assert lesion_mask is not None
-            runner.add_step(
-                create_lesion_excluded_mask_step(
-                    scaffold_mask=resampled,
-                    lesion_mask=lesion_mask,
-                    output=output,
-                    force=opts.overwrite,
-                )
-            )
-        runner.add_step(
-            _write_json_step(
-                output.with_suffix("").with_suffix(".json"),
-                {
-                    "Type": "ROI mask",
-                    "Structure": structure,
-                    "Sources": [
-                        str(aseg_mgz),
-                        str(subject_anat),
-                        *([str(lesion_mask)] if lesion_mask is not None else []),
-                    ],
-                    "FreeSurferLabels": labels,
-                    "FreeSurferSegmentations": list(segmentations),
-                    "ReferenceImage": str(subject_anat),
-                },
-            )
-        )
-        subcortical_masks[structure] = str(output)
+    runner.add_steps(session_staging.steps)
+    gradient_corrected_sources = session_staging.products.gradient_corrected_sources
+    selection = plan_subject_selection(
+        opts=opts,
+        inputs=inputs,
+        layout=layout,
+        session_plans=session_plans,
+        gradient_corrected_sources=gradient_corrected_sources,
+        synthetic_t1w=synthetic_t1w,
+        env=env,
+        run_child=runner.run_child,
+    )
+    runner.add_steps(selection.steps)
+    copied_session_files = selection.products.copied_session_files
+    lesion_raw_t1_selected = selection.products.lesion_raw_t1_selected
+    subj_t1_selected = selection.products.subj_t1_selected
+    subj_t2_selected = selection.products.subj_t2_selected
+    t1_meta = selection.products.t1_meta
+    t2_meta = selection.products.t2_meta
+    pose_source = selection.products.pose_source
+    pose_modality = selection.products.pose_modality
+    pose_mask = selection.products.pose_mask
+    pose_normalization = plan_pose_normalization(
+        env=env,
+        inputs=inputs,
+        layout=layout,
+        mni_brain_mask=mni_brain_mask,
+        mni_brain_template=mni_brain_template,
+        opts=opts,
+        pose_mask=pose_mask,
+        pose_modality=pose_modality,
+        pose_source=pose_source,
+        subj_t1_selected=subj_t1_selected,
+        subj_t2_selected=subj_t2_selected,
+    )
+    runner.add_steps(pose_normalization.steps)
+    pose_output = pose_normalization.products.pose_output
+    published_source_to_reference = pose_normalization.products.published_source_to_reference
+    reference_grid = pose_normalization.products.reference_grid
+    reference_mask = pose_normalization.products.reference_mask
+    reference_space = pose_normalization.products.reference_space
+    reference_to_source = pose_normalization.products.reference_to_source
+    source_to_reference = pose_normalization.products.source_to_reference
+    subj_t1 = pose_normalization.products.subj_t1
+    subj_t2 = pose_normalization.products.subj_t2
+    reference_outputs = plan_reference_outputs(
+        env=env,
+        inputs=inputs,
+        layout=layout,
+        lesion_raw_t1_selected=lesion_raw_t1_selected,
+        opts=opts,
+        pose_mask=pose_mask,
+        pose_output=pose_output,
+        pose_source=pose_source,
+        published_source_to_reference=published_source_to_reference,
+        reference_grid=reference_grid,
+        reference_space=reference_space,
+        reference_to_source=reference_to_source,
+        source_to_reference=source_to_reference,
+        subj_t1=subj_t1,
+        subj_t2=subj_t2,
+        subj_t2_selected=subj_t2_selected,
+        synthetic_t1w=synthetic_t1w,
+        t1_meta=t1_meta,
+        t2_meta=t2_meta,
+    )
+    runner.add_steps(reference_outputs.steps)
+    lesion_synthsr_input = reference_outputs.products.lesion_synthsr_input
+    myelin_map = reference_outputs.products.myelin_map
+    pose_qc = reference_outputs.products.pose_qc
+    pose_xfms = reference_outputs.products.pose_xfms
+    subject_anat = reference_outputs.products.subject_anat
+    t2w_to_t1w_xfms = reference_outputs.products.t2w_to_t1w_xfms
 
-    brain_mask = opts.out_dir / f"{inputs.sub_id}_desc-brain_mask.nii.gz"
-    gray_mask = opts.out_dir / f"{inputs.sub_id}_desc-grayMatter_mask.nii.gz"
-    ribbon_mask = opts.out_dir / f"{inputs.sub_id}_desc-ribbon_mask.nii.gz"
-    core_work = opts.work_dir / "core_masks"
-    brain_temporary = core_work / f"{inputs.sub_id}_desc-brain_mask_fs.nii.gz"
-    gray_temporary = core_work / f"{inputs.sub_id}_desc-grayMatter_mask_fs.nii.gz"
-    ribbon_temporary = core_work / f"{inputs.sub_id}_desc-ribbon_mask_fs.nii.gz"
-    brain_resampled = (
-        core_work / f"{inputs.sub_id}_desc-brain_mask_scaffold.nii.gz"
-        if opts.lesion
-        else brain_mask
+    lesion_reconstruction_inputs = plan_lesion_reconstruction_inputs(
+        env=env,
+        inputs=inputs,
+        lesion_masker_command=lesion_masker_command,
+        lesion_masker_module=lesion_masker_module,
+        lesion_raw_t1_selected=lesion_raw_t1_selected,
+        lesion_synthsr_input=lesion_synthsr_input,
+        opts=opts,
+        reference_mask=reference_mask,
+        subj_t1=subj_t1,
+        subj_t2=subj_t2,
+        synthstroke_data=synthstroke_data,
+        run_child=runner.run_child,
     )
-    gray_resampled = (
-        core_work / f"{inputs.sub_id}_desc-grayMatter_mask_scaffold.nii.gz"
-        if opts.lesion
-        else gray_mask
+    runner.add_steps(lesion_reconstruction_inputs.steps)
+    lesion_mask = lesion_reconstruction_inputs.products.lesion_mask
+    lesion_metadata = lesion_reconstruction_inputs.products.lesion_metadata
+    lesion_probability = lesion_reconstruction_inputs.products.lesion_probability
+    lesion_qc = lesion_reconstruction_inputs.products.lesion_qc
+    lesion_reconstruction_summary = (
+        lesion_reconstruction_inputs.products.lesion_reconstruction_summary
     )
-    ribbon_resampled = (
-        core_work / f"{inputs.sub_id}_desc-ribbon_mask_scaffold.nii.gz"
-        if opts.lesion
-        else ribbon_mask
+    reconstruction_mask = lesion_reconstruction_inputs.products.reconstruction_mask
+    reconstruction_t1 = lesion_reconstruction_inputs.products.reconstruction_t1
+    reconstruction_t2 = lesion_reconstruction_inputs.products.reconstruction_t2
+    synthetic_scaffold_t1 = lesion_reconstruction_inputs.products.synthetic_scaffold_t1
+    surface_reconstruction = plan_surface_reconstruction(
+        derivative_root=derivative_root,
+        env=env,
+        inputs=inputs,
+        layout=layout,
+        lesion_mask=lesion_mask,
+        lesion_reconstruction_summary=lesion_reconstruction_summary,
+        opts=opts,
+        reconstruction_mask=reconstruction_mask,
+        reconstruction_t1=reconstruction_t1,
+        reconstruction_t2=reconstruction_t2,
+        subj_t1=subj_t1,
+        subject_anat=subject_anat,
+        synthetic_scaffold_t1=synthetic_scaffold_t1,
+        run_child=runner.run_child,
     )
-    brainmask_mgz = subject_dir / "mri" / "brainmask.mgz"
-    ribbon_mgz = subject_dir / "mri" / "ribbon.mgz"
-    runner.add_step(
-        _export_mgz(
-            env=env,
-            src=brainmask_mgz,
-            dst=brain_temporary,
-            force=opts.overwrite,
-        )
+    runner.add_steps(surface_reconstruction.steps)
+    core_masks = surface_reconstruction.products.core_masks
+    fsnative_xfms = surface_reconstruction.products.fsnative_xfms
+    lesion_reconstruction_summary = surface_reconstruction.products.lesion_reconstruction_summary
+    subcortical_masks = surface_reconstruction.products.subcortical_masks
+    subject_t1 = surface_reconstruction.products.subject_t1
+    surface_export = plan_surface_export(
+        env=env,
+        layout=layout,
+        opts=opts,
+        subject_t1=subject_t1,
     )
-    runner.add_step(
-        _resample_mask_to_native(
-            env=env,
-            src=brain_temporary,
-            ref_image=subject_anat,
-            dst=brain_resampled,
-            force=opts.overwrite,
-        )
-    )
-    if opts.lesion:
-        assert lesion_mask is not None
-        runner.add_step(
-            create_lesion_excluded_mask_step(
-                scaffold_mask=brain_resampled,
-                lesion_mask=lesion_mask,
-                output=brain_mask,
-                force=opts.overwrite,
-            )
-        )
-    runner.add_step(
-        _write_json_step(
-            brain_mask.with_suffix("").with_suffix(".json"),
-            {
-                "Type": "brain mask",
-                "Sources": [
-                    str(brainmask_mgz),
-                    str(subject_anat),
-                    *([str(lesion_mask)] if lesion_mask is not None else []),
-                ],
-                "ReferenceImage": str(subject_anat),
-            },
-        )
-    )
-    gray_labels = _aseg_label_ids(_FREESURFER_GRAY_MATTER_SEGMENTATIONS)
-    runner.add_step(
-        _create_label_mask_step(
-            source=aseg_mgz,
-            output=gray_temporary,
-            labels=gray_labels,
-            name="Extract Gray Matter FreeSurfer Labels",
-            env=env,
-            force=opts.overwrite,
-        )
-    )
-    runner.add_step(
-        _resample_mask_to_native(
-            env=env,
-            src=gray_temporary,
-            ref_image=subject_anat,
-            dst=gray_resampled,
-            force=opts.overwrite,
-        )
-    )
-    if opts.lesion:
-        assert lesion_mask is not None
-        runner.add_step(
-            create_lesion_excluded_mask_step(
-                scaffold_mask=gray_resampled,
-                lesion_mask=lesion_mask,
-                output=gray_mask,
-                force=opts.overwrite,
-            )
-        )
-    runner.add_step(
-        _write_json_step(
-            gray_mask.with_suffix("").with_suffix(".json"),
-            {
-                "Type": "gray matter mask",
-                "Sources": [
-                    str(aseg_mgz),
-                    str(subject_anat),
-                    *([str(lesion_mask)] if lesion_mask is not None else []),
-                ],
-                "FreeSurferLabels": gray_labels,
-                "FreeSurferSegmentations": list(_FREESURFER_GRAY_MATTER_SEGMENTATIONS),
-                "ReferenceImage": str(subject_anat),
-            },
-        )
-    )
-    runner.add_step(
-        _create_ribbon_mask_step(
-            source=ribbon_mgz,
-            output=ribbon_temporary,
-            env=env,
-            force=opts.overwrite,
-        )
-    )
-    runner.add_step(
-        _resample_mask_to_native(
-            env=env,
-            src=ribbon_temporary,
-            ref_image=subject_anat,
-            dst=ribbon_resampled,
-            force=opts.overwrite,
-        )
-    )
-    if opts.lesion:
-        assert lesion_mask is not None
-        runner.add_step(
-            create_lesion_excluded_mask_step(
-                scaffold_mask=ribbon_resampled,
-                lesion_mask=lesion_mask,
-                output=ribbon_mask,
-                force=opts.overwrite,
-            )
-        )
-    runner.add_step(
-        _write_json_step(
-            ribbon_mask.with_suffix("").with_suffix(".json"),
-            {
-                "Type": "cortical ribbon mask",
-                "Sources": [
-                    str(ribbon_mgz),
-                    str(subject_anat),
-                    *([str(lesion_mask)] if lesion_mask is not None else []),
-                ],
-                "ReferenceImage": str(subject_anat),
-            },
-        )
-    )
-    core_masks = {
-        "brain": str(brain_mask),
-        "gray_matter": str(gray_mask),
-        "cortical_ribbon": str(ribbon_mask),
-    }
-    subject_t1 = subj_t1 or subject_anat
-    fsnative_ref = opts.freesurfer_subjects_dir / opts.fs_subject / "mri" / "T1.mgz"
-    t1_to_fsnative = opts.out_dir / f"{opts.fs_subject}_from-T1w_to-fsnative_mode-image_xfm.txt"
-    fsnative_to_t1 = opts.out_dir / f"{opts.fs_subject}_from-fsnative_to-T1w_mode-image_xfm.txt"
-    t1_to_fsnative_reg = opts.out_dir / f"{opts.fs_subject}_from-T1w_to-fsnative_mode-image_xfm.dat"
-    runner.add_step(
-        _create_t1_to_fsnative_affine_step(
-            subject_t1=subject_t1,
-            fsnative_reference=fsnative_ref,
-            output=t1_to_fsnative,
-            registration_file=t1_to_fsnative_reg,
-            env=env,
-            force=opts.overwrite,
-        )
-    )
-    runner.add_step(
-        _create_inverse_affine_step(
-            source=t1_to_fsnative,
-            output=fsnative_to_t1,
-            env=env,
-            force=opts.overwrite,
-        )
-    )
-    fsnative_xfms = {
-        "t1w_to_fsnative": str(t1_to_fsnative),
-        "fsnative_to_t1w": str(fsnative_to_t1),
-    }
-    for path, from_space, to_space in (
-        (t1_to_fsnative, "T1w", "fsnative"),
-        (fsnative_to_t1, "fsnative", "T1w"),
-    ):
-        runner.add_step(
-            _write_json_step(
-                path.with_suffix(".json"),
-                {
-                    "Type": "affine",
-                    "Format": "FSL",
-                    "Sources": [str(subject_t1), str(fsnative_ref)],
-                    "SpatialReference": to_space,
-                    "From": from_space,
-                    "To": to_space,
-                },
-            )
-        )
+    runner.add_steps(surface_export.steps)
+    exported_surfaces = surface_export.products.exported_surfaces
+    intact_surfaces = surface_export.products.intact_surfaces
+    lesion_scaffold_anatomy = surface_export.products.lesion_scaffold_anatomy
+    lesion_scaffold_metrics = surface_export.products.lesion_scaffold_metrics
+    lesion_scaffold_surfaces = surface_export.products.lesion_scaffold_surfaces
 
-    surface_work_dir = opts.work_dir / "surface_export"
-    surface_dir = opts.freesurfer_subjects_dir / opts.fs_subject / "surf"
-    fs_t1_ref_nii = surface_work_dir / f"{opts.fs_subject}_fs_t1_ref.nii.gz"
-    runner.add_step(
-        _create_mri_conversion_step(
-            source=fsnative_ref,
-            output=fs_t1_ref_nii,
-            env=env,
-            force=opts.overwrite,
-            name="Convert FreeSurfer T1 Reference to NIfTI",
-        )
+    fsaverage_registration = plan_fsaverage_registration(
+        env=env,
+        layout=layout,
+        lesion_scaffold_surfaces=lesion_scaffold_surfaces,
+        opts=opts,
     )
-    exported_surfaces: dict[str, str] = {}
-    intact_surfaces: dict[str, str] = {}
-    lesion_scaffold_surfaces: dict[str, dict[Path, Path]] = {"lh": {}, "rh": {}}
-    lesion_scaffold_metrics: dict[str, dict[Path, Path]] = {"lh": {}, "rh": {}}
-    lesion_scaffold_anatomy: dict[str, dict[str, Path]] = {"lh": {}, "rh": {}}
-    for hemi in ("lh", "rh"):
-        hemi_label = _hemi_label(hemi)
-        hemi_paths: dict[str, Path] = {}
-        white_source = surface_dir / f"{hemi}.white"
-        for source_name, bids_suffix in _surface_names().items():
-            source = surface_dir / f"{hemi}.{source_name}"
-            output_name = (
-                f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_{bids_suffix}.surf.gii"
-            )
-            output = opts.out_dir / output_name
-            generated_output = (
-                surface_work_dir / "lesion_scaffold" / output_name if opts.lesion else output
-            )
-            is_sphere = source_name in {"sphere", "sphere.reg"}
-            if is_sphere:
-                runner.add_step(
-                    _create_mri_conversion_step(
-                        source=source,
-                        output=generated_output,
-                        env=env,
-                        force=opts.overwrite,
-                        name="Convert FreeSurfer Sphere",
-                        executable="mris_convert",
-                    )
-                )
-            else:
-                raw = surface_work_dir / f"scanner_{output_name}"
-                affined = surface_work_dir / f"affined_{output_name}"
-                runner.add_step(
-                    _create_mri_conversion_step(
-                        source=source,
-                        output=raw,
-                        env=env,
-                        force=opts.overwrite,
-                        name="Surface Conversion",
-                        to_scanner=True,
-                        executable="mris_convert",
-                    )
-                )
-                runner.add_step(
-                    _create_surface_affine_step(
-                        source=raw,
-                        affine=fsnative_to_t1,
-                        source_volume=fs_t1_ref_nii,
-                        target_volume=subject_t1,
-                        output=affined,
-                        env=env,
-                        force=opts.overwrite,
-                    )
-                )
-                runner.add_step(
-                    _strip_freesurfer_volgeom_metadata(
-                        surf_in=affined,
-                        surf_out=generated_output,
-                        force=opts.overwrite,
-                    )
-                )
-            runner.add_step(
-                _write_json_step(
-                    output.with_suffix(".json"),
-                    {
-                        "Hemisphere": hemi_label,
-                        "Space": "fsnative",
-                        "AnatomicalStructurePrimary": "Cortex",
-                        "SurfaceType": bids_suffix,
-                        "Sources": [str(source)],
-                        "SpatialReference": "fsnative" if is_sphere else "T1w",
-                    },
-                )
-            )
-            if opts.lesion and source_name in {"white", "pial", "inflated"}:
-                intact_output = opts.out_dir / output_name.replace(
-                    f"_{bids_suffix}.surf.gii",
-                    f"_desc-inpainted_{bids_suffix}.surf.gii",
-                )
-                runner.add_step(
-                    create_copy_file_step(
-                        src=generated_output,
-                        dst=intact_output,
-                        force=opts.overwrite,
-                        step_name=f"Publish Intact Hemisphere {hemi_label} {bids_suffix} Surface",
-                    )
-                )
-                runner.add_step(
-                    _write_json_step(
-                        intact_output.with_suffix(".json"),
-                        {
-                            "Hemisphere": hemi_label,
-                            "Space": "fsnative",
-                            "AnatomicalStructurePrimary": "Cortex",
-                            "SurfaceType": bids_suffix,
-                            "Sources": [str(source)],
-                            "SpatialReference": "T1w",
-                            "SyntheticTissue": True,
-                            "Description": "Intact scaffold reconstructed from the synthetic SynthSR T1w image.",
-                        },
-                    )
-                )
-                intact_surfaces[f"{hemi}.{source_name}"] = str(intact_output)
-            exported_surfaces[f"{hemi}.{source_name}"] = str(output)
-            hemi_paths[source_name] = generated_output
-            if opts.lesion:
-                lesion_scaffold_surfaces[hemi][generated_output] = output
-                lesion_scaffold_anatomy[hemi][source_name] = generated_output
-
-        for metric_name, (bids_suffix, metric_description) in _metric_names().items():
-            metric_source = surface_dir / f"{hemi}.{metric_name}"
-            metric_output = (
-                opts.out_dir
-                / f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_{bids_suffix}.shape.gii"
-            )
-            generated_metric_output = (
-                surface_work_dir / "lesion_scaffold" / metric_output.name
-                if opts.lesion
-                else metric_output
-            )
-            converted_metric_output = surface_work_dir / "metric_conversion" / metric_output.name
-            metric_structure = f"Cortex{'Left' if hemi_label == 'L' else 'Right'}"
-            runner.add_step(
-                _create_metric_conversion_step(
-                    metric=metric_source,
-                    surface=white_source,
-                    output=converted_metric_output,
-                    description=metric_description,
-                    env=env,
-                    force=opts.overwrite,
-                )
-            )
-            runner.add_step(
-                _create_metric_structure_step(
-                    source=converted_metric_output,
-                    output=generated_metric_output,
-                    structure=metric_structure,
-                    description=metric_description,
-                    force=opts.overwrite,
-                )
-            )
-            runner.add_step(
-                _write_json_step(
-                    metric_output.with_suffix(".json"),
-                    {
-                        "Hemisphere": hemi_label,
-                        "Space": "fsnative",
-                        "AnatomicalStructurePrimary": metric_structure,
-                        "MetricType": metric_description,
-                        "Sources": [str(metric_source), str(white_source)],
-                    },
-                )
-            )
-            exported_surfaces[f"{hemi}.{metric_name}"] = str(metric_output)
-            if opts.lesion:
-                lesion_scaffold_metrics[hemi][generated_metric_output] = metric_output
-
-        white = hemi_paths["white"]
-        pial = hemi_paths["pial"]
-        midthickness = (
-            opts.out_dir
-            / f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_midthickness.surf.gii"
-        )
-        generated_midthickness = (
-            surface_work_dir / "lesion_scaffold" / midthickness.name
-            if opts.lesion
-            else midthickness
-        )
-        runner.add_step(
-            _create_midthickness_step(
-                white=white,
-                pial=pial,
-                output=generated_midthickness,
-                env=env,
-                force=opts.overwrite,
-            )
-        )
-        runner.add_step(
-            _write_json_step(
-                midthickness.with_suffix(".json"),
-                {
-                    "Hemisphere": hemi_label,
-                    "Space": "fsnative",
-                    "AnatomicalStructurePrimary": "Cortex",
-                    "SurfaceType": "midthickness",
-                    "Sources": [str(white), str(pial)],
-                },
-            )
-        )
-        if opts.lesion:
-            intact_midthickness = opts.out_dir / midthickness.name.replace(
-                "_midthickness.surf.gii",
-                "_desc-inpainted_midthickness.surf.gii",
-            )
-            runner.add_step(
-                create_copy_file_step(
-                    src=generated_midthickness,
-                    dst=intact_midthickness,
-                    force=opts.overwrite,
-                    step_name=f"Publish Intact Hemisphere {hemi_label} Midthickness Surface",
-                )
-            )
-            runner.add_step(
-                _write_json_step(
-                    intact_midthickness.with_suffix(".json"),
-                    {
-                        "Hemisphere": hemi_label,
-                        "Space": "fsnative",
-                        "AnatomicalStructurePrimary": "Cortex",
-                        "SurfaceType": "midthickness",
-                        "Sources": [
-                            intact_surfaces[f"{hemi}.white"],
-                            intact_surfaces[f"{hemi}.pial"],
-                        ],
-                        "SpatialReference": "T1w",
-                        "SyntheticTissue": True,
-                        "Description": "Intact scaffold reconstructed from the synthetic SynthSR T1w image.",
-                    },
-                )
-            )
-            intact_surfaces[f"{hemi}.midthickness"] = str(intact_midthickness)
-        exported_surfaces[f"{hemi}.midthickness"] = str(midthickness)
-        if opts.lesion:
-            lesion_scaffold_surfaces[hemi][generated_midthickness] = midthickness
-            lesion_scaffold_anatomy[hemi]["midthickness"] = generated_midthickness
-
-    fsaverage_space = opts.fsaverage_template
-    fsaverage_xfms: dict[str, str] = {}
-    for hemi in ("lh", "rh"):
-        hemi_label = _hemi_label(hemi)
-        subject_registration = surface_dir / f"{hemi}.sphere.reg"
-        fsaverage_sphere = find_fsaverage_template_surface(
-            template=fsaverage_space,
-            hemi=hemi_label,
-            surface="sphere",
-        )
-        forward = (
-            opts.out_dir
-            / f"{opts.fs_subject}_from-fsnative_to-{fsaverage_space}_hemi-{hemi_label}_mode-surface_xfm.surf.gii"
-        )
-        generated_forward = (
-            surface_work_dir / "lesion_scaffold" / forward.name if opts.lesion else forward
-        )
-        inverse = (
-            opts.out_dir
-            / f"{opts.fs_subject}_from-{fsaverage_space}_to-fsnative_hemi-{hemi_label}_mode-surface_xfm.surf.gii"
-        )
-        runner.add_step(
-            _create_mri_conversion_step(
-                source=subject_registration,
-                output=generated_forward,
-                name=f"Export Hemisphere {hemi_label} fsnative-to-{fsaverage_space} Sphere",
-                env=env,
-                force=opts.overwrite,
-                executable="mris_convert",
-            )
-        )
-        runner.add_step(
-            create_copy_file_step(
-                src=fsaverage_sphere,
-                dst=inverse,
-                force=opts.overwrite,
-                step_name=f"Export Hemisphere {hemi_label} {fsaverage_space}-to-fsnative Sphere",
-            )
-        )
-        for path, from_space, to_space, sources in (
-            (
-                forward,
-                "fsnative",
-                fsaverage_space,
-                (subject_registration, fsaverage_sphere),
-            ),
-            (
-                inverse,
-                fsaverage_space,
-                "fsnative",
-                (fsaverage_sphere, subject_registration),
-            ),
-        ):
-            runner.add_step(
-                _write_json_step(
-                    path.with_suffix(".json"),
-                    {
-                        "Type": "surface",
-                        "Format": "FreeSurferSphereRegistration",
-                        "Hemisphere": hemi_label,
-                        "From": from_space,
-                        "To": to_space,
-                        "Sources": [str(source) for source in sources],
-                    },
-                )
-            )
-        fsaverage_xfms[f"hemi-{hemi_label}_fsnative_to_{fsaverage_space}"] = str(forward)
-        fsaverage_xfms[f"hemi-{hemi_label}_{fsaverage_space}_to_fsnative"] = str(inverse)
-        if opts.lesion:
-            lesion_scaffold_surfaces[hemi][generated_forward] = forward
+    runner.add_steps(fsaverage_registration.steps)
+    fsaverage_space = fsaverage_registration.products.fsaverage_space
+    fsaverage_xfms = fsaverage_registration.products.fsaverage_xfms
 
     msmall_outputs: dict[str, object] | None = None
     if opts.msmall is not None:
@@ -1681,7 +329,7 @@ def build_module(
             license_path=Path(env["FS_LICENSE"]),
             structural_t1w=subj_t1,
             structural_t2w=subj_t2,
-            structural_brain_mask=brain_mask,
+            structural_brain_mask=layout.brain_mask,
             native_registration_spheres={
                 hemi: Path(exported_surfaces[f"{hemi}.sphere.reg"]) for hemi in ("lh", "rh")
             },
@@ -1689,428 +337,75 @@ def build_module(
             force=opts.overwrite,
         )
 
-    lesion_vertex_mappings: dict[str, str] = {}
-    lesion_surface_validity: dict[str, str] = {}
-    if opts.lesion:
-        assert lesion_mask is not None
-        for hemi in ("lh", "rh"):
-            hemi_label = _hemi_label(hemi)
-            lesion_metric = (
-                surface_work_dir / "lesion_scaffold" / f"hemi-{hemi_label}_lesion.shape.gii"
-            )
-            runner.add_step(
-                Step.command_step(
-                    [
-                        "wb_command",
-                        "-volume-to-surface-mapping",
-                        str(lesion_mask),
-                        str(lesion_scaffold_anatomy[hemi]["midthickness"]),
-                        str(lesion_metric),
-                        "-ribbon-constrained",
-                        str(lesion_scaffold_anatomy[hemi]["white"]),
-                        str(lesion_scaffold_anatomy[hemi]["pial"]),
-                    ],
-                    name=f"Project Lesion to Hemisphere {hemi_label}",
-                    inputs=(
-                        lesion_mask,
-                        lesion_scaffold_anatomy[hemi]["midthickness"],
-                        lesion_scaffold_anatomy[hemi]["white"],
-                        lesion_scaffold_anatomy[hemi]["pial"],
-                    ),
-                    outputs=(lesion_metric,),
-                    env=env,
-                    force=opts.overwrite,
-                    parameters={"mapping": "ribbon_constrained"},
-                )
-            )
-            projected_metric = lesion_metric
-            if BOUNDARY_MARGIN_MM > 0:
-                dilated = lesion_metric.with_name(
-                    lesion_metric.name.replace("_lesion.", "_lesionDilated.")
-                )
-                runner.add_step(
-                    Step.command_step(
-                        [
-                            "wb_command",
-                            "-metric-dilate",
-                            str(lesion_metric),
-                            str(lesion_scaffold_anatomy[hemi]["midthickness"]),
-                            str(BOUNDARY_MARGIN_MM),
-                            str(dilated),
-                        ],
-                        name=f"Dilate Hemisphere {hemi_label} Lesion Boundary",
-                        inputs=(lesion_metric, lesion_scaffold_anatomy[hemi]["midthickness"]),
-                        outputs=(dilated,),
-                        env=env,
-                        force=opts.overwrite,
-                        parameters={"distance_mm": BOUNDARY_MARGIN_MM},
-                    )
-                )
-                projected_metric = dilated
-            mapping = (
-                opts.out_dir
-                / f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_desc-surfaceVertexMapping.tsv"
-            )
-            validity = (
-                opts.out_dir
-                / f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_desc-surfaceValidity.json"
-            )
-            runner.add_step(
-                create_cut_surfaces_step(
-                    scaffold_surface=lesion_scaffold_anatomy[hemi]["midthickness"],
-                    lesion_metric=projected_metric,
-                    surfaces=lesion_scaffold_surfaces[hemi],
-                    metrics=lesion_scaffold_metrics[hemi],
-                    mapping=mapping,
-                    summary=validity,
-                    force=opts.overwrite,
-                )
-            )
-            lesion_vertex_mappings[hemi] = str(mapping)
-            lesion_surface_validity[hemi] = str(validity)
+    lesion_surfaces = plan_lesion_surfaces(
+        env=env,
+        layout=layout,
+        lesion_mask=lesion_mask,
+        lesion_scaffold_anatomy=lesion_scaffold_anatomy,
+        lesion_scaffold_metrics=lesion_scaffold_metrics,
+        lesion_scaffold_surfaces=lesion_scaffold_surfaces,
+        opts=opts,
+    )
+    runner.add_steps(lesion_surfaces.steps)
+    lesion_surface_validity = lesion_surfaces.products.lesion_surface_validity
+    lesion_vertex_mappings = lesion_surfaces.products.lesion_vertex_mappings
 
-    t1_fsaverage_xfms: dict[str, str] = {}
-    for hemi_label in ("L", "R"):
-        fsnative_to_fsaverage = Path(
-            fsaverage_xfms[f"hemi-{hemi_label}_fsnative_to_{fsaverage_space}"]
-        )
-        fsaverage_to_fsnative = Path(
-            fsaverage_xfms[f"hemi-{hemi_label}_{fsaverage_space}_to_fsnative"]
-        )
-        forward = (
-            opts.out_dir
-            / f"{opts.fs_subject}_from-T1w_to-{fsaverage_space}_hemi-{hemi_label}_mode-image+surface_xfm.json"
-        )
-        inverse = (
-            opts.out_dir
-            / f"{opts.fs_subject}_from-{fsaverage_space}_to-T1w_hemi-{hemi_label}_mode-surface+image_xfm.json"
-        )
-        runner.add_step(
-            create_json_step(
-                step_name=(
-                    f"Write Hemisphere {hemi_label} T1w-to-{fsaverage_space} Transform Metadata"
-                ),
-                path=forward,
-                payload={
-                    "Type": "chain",
-                    "Format": "surface",
-                    "Hemisphere": hemi_label,
-                    "From": "T1w",
-                    "To": fsaverage_space,
-                    "Steps": [str(fsnative_to_fsaverage)],
-                },
-                inputs=(fsnative_to_fsaverage,),
-                force=opts.overwrite,
-            )
-        )
-        runner.add_step(
-            create_json_step(
-                step_name=(
-                    f"Write Hemisphere {hemi_label} {fsaverage_space}-to-T1w Transform Metadata"
-                ),
-                path=inverse,
-                payload={
-                    "Type": "chain",
-                    "Format": "surface",
-                    "Hemisphere": hemi_label,
-                    "From": fsaverage_space,
-                    "To": "T1w",
-                    "Steps": [str(fsaverage_to_fsnative)],
-                },
-                inputs=(fsaverage_to_fsnative,),
-                force=opts.overwrite,
-            )
-        )
-        t1_fsaverage_xfms[f"hemi-{hemi_label}_t1w_to_{fsaverage_space}"] = str(forward)
-        t1_fsaverage_xfms[f"hemi-{hemi_label}_{fsaverage_space}_to_t1w"] = str(inverse)
+    template_transforms = plan_template_transforms(
+        fsaverage_space=fsaverage_space,
+        fsaverage_xfms=fsaverage_xfms,
+        opts=opts,
+    )
+    runner.add_steps(template_transforms.steps)
+    t1_fsaverage_xfms = template_transforms.products.t1_fsaverage_xfms
 
-    mni_prefix = opts.work_dir / "ants_mni_" / f"{opts.fs_subject}_"
-    t1_to_mni = (
-        opts.out_dir / f"{opts.fs_subject}_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5"
+    mni_registration = plan_mni_registration(
+        core_masks=core_masks,
+        env=env,
+        layout=layout,
+        mni_brain_mask=mni_brain_mask,
+        mni_brain_template=mni_brain_template,
+        opts=opts,
+        subject_t1=subject_t1,
     )
-    mni_to_t1 = (
-        opts.out_dir / f"{opts.fs_subject}_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5"
+    runner.add_steps(mni_registration.steps)
+    mni_qc_images = mni_registration.products.mni_qc_images
+    mni_xfms = mni_registration.products.mni_xfms
+    publication = plan_publication(
+        copied_session_files=copied_session_files,
+        core_masks=core_masks,
+        execution_context=execution_context,
+        exported_surfaces=exported_surfaces,
+        fsaverage_xfms=fsaverage_xfms,
+        fsnative_xfms=fsnative_xfms,
+        gradient_resolutions=gradient_resolutions,
+        inputs=inputs,
+        intact_surfaces=intact_surfaces,
+        layout=layout,
+        lesion_mask=lesion_mask,
+        lesion_metadata=lesion_metadata,
+        lesion_probability=lesion_probability,
+        lesion_qc=lesion_qc,
+        lesion_reconstruction_summary=lesion_reconstruction_summary,
+        lesion_surface_validity=lesion_surface_validity,
+        lesion_vertex_mappings=lesion_vertex_mappings,
+        mni_qc_images=mni_qc_images,
+        mni_xfms=mni_xfms,
+        msmall_outputs=msmall_outputs,
+        myelin_map=myelin_map,
+        opts=opts,
+        pose_qc=pose_qc,
+        pose_xfms=pose_xfms,
+        public_inputs=public_inputs,
+        subcortical_masks=subcortical_masks,
+        subj_t1=subj_t1,
+        subj_t2=subj_t2,
+        subject_anat=subject_anat,
+        synthetic_scaffold_t1=synthetic_scaffold_t1,
+        synthetic_t1w=synthetic_t1w,
+        t1_fsaverage_xfms=t1_fsaverage_xfms,
+        t2w_to_t1w_xfms=t2w_to_t1w_xfms,
     )
-    produced_t1_to_mni = mni_prefix.parent / f"{mni_prefix.name}Composite.h5"
-    produced_mni_to_t1 = mni_prefix.parent / f"{mni_prefix.name}InverseComposite.h5"
-    mni_registration_inputs = (
-        subject_t1,
-        Path(core_masks["brain"]),
-        opts.mni_template,
-        mni_brain_template,
-        mni_brain_mask,
-    )
-    runner.add_step(
-        _create_mni_registration_step(
-            subject_t1=subject_t1,
-            subject_brain_mask=Path(core_masks["brain"]),
-            mni_brain_template=mni_brain_template,
-            mni_brain_mask=mni_brain_mask,
-            mni_template=opts.mni_template,
-            prefix=mni_prefix,
-            produced_forward=produced_t1_to_mni,
-            produced_inverse=produced_mni_to_t1,
-            env=env,
-            force=opts.overwrite,
-        )
-    )
-    runner.add_step(
-        _create_transform_finalization_step(
-            produced_forward=produced_t1_to_mni,
-            produced_inverse=produced_mni_to_t1,
-            forward=t1_to_mni,
-            inverse=mni_to_t1,
-            force=opts.overwrite,
-        )
-    )
-    mni_xfms = {"t1w_to_mni": str(t1_to_mni), "mni_to_t1w": str(mni_to_t1)}
-    for path, from_space, to_space in (
-        (t1_to_mni, "T1w", "MNI152NLin2009cAsym"),
-        (mni_to_t1, "MNI152NLin2009cAsym", "T1w"),
-    ):
-        runner.add_step(
-            _write_json_step(
-                path.with_suffix(".json"),
-                {
-                    "Type": "composite",
-                    "Format": "ANTs",
-                    "Sources": [str(value) for value in mni_registration_inputs],
-                    "From": from_space,
-                    "To": to_space,
-                },
-            )
-        )
-
-    mni_in_t1 = opts.out_dir / f"{opts.fs_subject}_space-T1w_desc-mniToT1wQC.nii.gz"
-    t1_in_mni = opts.out_dir / f"{opts.fs_subject}_space-MNI152NLin2009cAsym_desc-t1ToMNIQC.nii.gz"
-    mni_qc_images: dict[str, str] = {}
-    for (
-        key,
-        output,
-        input_image,
-        reference,
-        transform,
-        from_space,
-        to_space,
-        description,
-    ) in (
-        (
-            "mni_to_t1w",
-            mni_in_t1,
-            opts.mni_template,
-            subject_t1,
-            mni_to_t1,
-            "MNI152NLin2009cAsym",
-            "T1w",
-            "Saved inverse composite transform applied once to project the MNI template into participant T1w space for QC.",
-        ),
-        (
-            "t1w_to_mni",
-            t1_in_mni,
-            subject_t1,
-            opts.mni_template,
-            t1_to_mni,
-            "T1w",
-            "MNI152NLin2009cAsym",
-            "Saved forward composite transform applied once to project the participant T1w reference into MNI space for QC.",
-        ),
-    ):
-        runner.add_step(
-            _create_mni_qc_image_step(
-                input_image=input_image,
-                reference=reference,
-                transform=transform,
-                output=output,
-                from_space=from_space,
-                to_space=to_space,
-                env=env,
-                force=opts.overwrite,
-            )
-        )
-        runner.add_step(
-            _write_json_step(
-                output.with_suffix("").with_suffix(".json"),
-                {
-                    "Type": "temporary QC image",
-                    "From": from_space,
-                    "To": to_space,
-                    "Transform": str(transform),
-                    "Sources": [str(input_image), str(reference)],
-                    "Description": description,
-                },
-            )
-        )
-        mni_qc_images[key] = str(output)
-    manifest = {
-        "subject": inputs.sub_id,
-        "fs_subject": opts.fs_subject,
-        "fsaverage_template": opts.fsaverage_template,
-        "selection_strategy": opts.selection_strategy,
-        "gradient_unwarping": {
-            str(path): resolution.scientific_record()
-            for path, resolution in gradient_resolutions.items()
-        },
-        "bias_correction": bias_correction_contract(),
-        "surface_reconstruction": surface_reconstruction_contract(
-            opts.surface_reconstruction_engine
-        ),
-        "inputs": {
-            "t1w": [str(item.image) for item in inputs.t1w],
-            "t2w": [str(item.image) for item in inputs.t2w],
-        },
-        "copied_session_files": copied_session_files,
-        "outputs": {
-            "t1w": (str(subj_t1) if subj_t1 is not None else None),
-            "t2w": (str(subj_t2) if subj_t2 is not None else None),
-            "myelin_map": (str(myelin_map) if myelin_map is not None else None),
-            "brain_image": str(subject_anat),
-            "brain_mask": core_masks["brain"],
-            "gray_matter_mask": core_masks["gray_matter"],
-            "cortical_ribbon_mask": core_masks["cortical_ribbon"],
-            "subcortical_masks": subcortical_masks,
-            "surfaces": exported_surfaces,
-            "mni_qc_images": mni_qc_images,
-            "pose_qc": str(pose_qc),
-            "xfms": {
-                **pose_xfms,
-                **t2w_to_t1w_xfms,
-                **fsnative_xfms,
-                **fsaverage_xfms,
-                **t1_fsaverage_xfms,
-                **mni_xfms,
-            },
-        },
-        "freesurfer_subjects_dir": str(opts.freesurfer_subjects_dir),
-        "mni_template": str(opts.mni_template),
-        "options": {
-            "synthstrip_image": (
-                str(opts.synthstrip_image) if opts.synthstrip_image is not None else None
-            ),
-            "configuration": {
-                "selection_strategy": opts.selection_strategy,
-                "gradient_unwarping": opts.gradient_unwarping,
-                "fs_subject": opts.fs_subject,
-                "fsaverage_template": opts.fsaverage_template,
-                "mni_template": str(opts.mni_template),
-                "synthstrip_image": (
-                    str(opts.synthstrip_image) if opts.synthstrip_image is not None else None
-                ),
-            },
-            "configuration_fingerprint": selected_configuration_fingerprint(),
-        },
-        "output_metadata_contract": anatomical_output_contract(
-            lesion=opts.lesion,
-            msmall=opts.msmall is not None,
-            synthetic_t1w=synthetic_t1w,
-        ),
-        "complete": True,
-    }
-    if synthetic_t1w:
-        manifest["t1w_synthesis"] = t1w_synthesis_contract()
-        manifest_options = manifest["options"]
-        assert isinstance(manifest_options, dict)
-        manifest_configuration = manifest_options["configuration"]
-        assert isinstance(manifest_configuration, dict)
-        manifest_configuration["t1w_fallback"] = opts.t1w_fallback
-    if opts.lesion:
-        assert lesion_mask is not None
-        assert lesion_probability is not None
-        assert lesion_metadata is not None
-        assert lesion_qc is not None
-        assert synthetic_scaffold_t1 is not None
-        assert lesion_reconstruction_summary is not None
-        manifest["lesion"] = {
-            "enabled": True,
-            "masker": {
-                "backend": "SynthStroke",
-                "model": MASKER_MODEL,
-                "revision": MASKER_REVISION,
-                "probability_threshold": PROBABILITY_THRESHOLD,
-                "test_time_augmentation": TEST_TIME_AUGMENTATION,
-            },
-            "reconstruction": {
-                "strategy": "whole_brain_synthesis_surface_reconstruction_excision",
-                "scaffold_synthesis": synthsr_scaffold_contract(),
-                "surface_reconstruction": surface_reconstruction_contract(
-                    opts.surface_reconstruction_engine
-                ),
-                "scaffold_directory": str(subject_dir),
-                "canonical_surface_policy": "lesion_excised",
-            },
-            "boundary_margin_mm": BOUNDARY_MARGIN_MM,
-        }
-        manifest_outputs = manifest["outputs"]
-        assert isinstance(manifest_outputs, dict)
-        manifest_outputs.update(
-            inpainted_t1w=str(synthetic_scaffold_t1),
-            inpainted_t1w_metadata=str(synthetic_scaffold_t1.with_suffix("").with_suffix(".json")),
-            intact_surfaces=intact_surfaces,
-            lesion_mask=str(lesion_mask),
-            lesion_metadata=str(lesion_metadata),
-            lesion_probability=str(lesion_probability),
-            lesion_qc=str(lesion_qc),
-            lesion_reconstruction_summary=str(lesion_reconstruction_summary),
-            surface_vertex_mappings=lesion_vertex_mappings,
-            surface_validity=lesion_surface_validity,
-        )
-    if opts.msmall is not None:
-        assert msmall_outputs is not None
-        manifest["msmall"] = {
-            "enabled": True,
-            "manifest": msmall_outputs["manifest"],
-        }
-        manifest_outputs = manifest["outputs"]
-        assert isinstance(manifest_outputs, dict)
-        manifest_outputs["msmall"] = msmall_outputs
-    manifest_path = anatomical_manifest_path(
-        inputs.sub_id,
-        project=opts.project,
-        anat_id=opts.anat_id,
-        bids_root=None if execution_context is None else execution_context.paths.bids,
-    )
-    if execution_context is not None:
-        manifest_path = execution_context.output_path(manifest_path)
-    published_outputs = _nested_paths(manifest["outputs"]) + tuple(
-        Path(path) for path in copied_session_files
-    )
-
-    def validate_publication() -> tuple[bool, str]:
-        try:
-            current = read_public_json(manifest_path)
-            validate_anatomical_manifest(current)
-        except (OSError, ValueError, TypeError):
-            return False, "Anatomical publication manifest is missing or unreadable."
-        if current != manifest:
-            return False, "Anatomical publication manifest differs from the requested module."
-        missing = [
-            str(path)
-            for path in published_outputs
-            if not path.is_file() or path.stat().st_size == 0
-        ]
-        if missing:
-            return False, "Anatomical publication is missing outputs: " + ", ".join(missing)
-        return True, "Anatomical publication is complete and current."
-
-    def publish_manifest() -> None:
-        validate_anatomical_manifest(manifest)
-        try:
-            if read_public_json(manifest_path) == manifest:
-                return
-        except (OSError, ValueError, TypeError):
-            pass
-        write_public_json(manifest_path, manifest)
-
-    runner.add_step(
-        Step.python(
-            name="Write Anatomical Publication Manifest",
-            outputs=(manifest_path,),
-            inputs=(*published_outputs, *public_inputs),
-            force=opts.overwrite,
-            action=publish_manifest,
-            validate=validate_publication,
-            completion_boundary=True,
-        )
-    )
+    runner.add_steps(publication.steps)
 
     return runner
 
@@ -2121,15 +416,14 @@ def run(
     *,
     execution_context: ExecutionContext | None = None,
 ) -> None:
-    """Construct the module graph, execute it through the shared runner, and publish outputs.
+    """Construct the module graph and execute it through the shared runner.
 
     Freshness is evaluated after graph construction. Processing and validation
     errors propagate to the caller; partial private outputs can support resumption.
     """
     runner_started = time.perf_counter()
     runner = build_module(inputs, opts, execution_context=execution_context)
-    with runner.run_context(started_at=runner_started):
-        runner.execute()
+    runner.execute_graph(started_at=runner_started)
 
 
 def _build_argparser() -> argparse.ArgumentParser:

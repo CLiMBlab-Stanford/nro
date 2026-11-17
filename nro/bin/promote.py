@@ -6,14 +6,15 @@ import sys
 from pathlib import Path
 
 from nro.definitions.store import ConfigStore
-from nro.engine.cli import add_core_selection_arguments, core_selection
+from nro.engine.cli import add_core_selection_arguments, confirm, core_selection
 from nro.orchestration.branch_requests import register_requests
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.catalog import MODULES, terminal_modules
 from nro.orchestration.planner import Planner
 from nro.orchestration.scheduler_client import maintenance
 from nro.orchestration.selection import discover_bids_inventory
-from nro.site.configuration import CHECKOUT, settings
+from nro.site import configuration as site_config
+from nro.site.configuration import settings
 
 
 def main(argv=None, *, prog="nro promote"):
@@ -49,7 +50,7 @@ def main(argv=None, *, prog="nro promote"):
         selection = core_selection(args)
         values = settings()[0]
         control, bids = Path(values["registry"]), Path(values["bids"])
-        scientific = BranchStore(control).registry_for_checkout(CHECKOUT)
+        scientific = BranchStore(control).registry_for_checkout(site_config.CHECKOUT)
         workflows = {name: ConfigStore().resolve(name) for name in selection.workflows}
         modules = tuple(
             selection.modules
@@ -94,7 +95,7 @@ def main(argv=None, *, prog="nro promote"):
         report = maintenance(
             control,
             bids,
-            checkout=CHECKOUT,
+            checkout=site_config.CHECKOUT,
             operation="promotion_preview",
             source=args.source,
             requests=requests,
@@ -106,14 +107,12 @@ def main(argv=None, *, prog="nro promote"):
             return
         for item in report["items"]:
             print(f"{item['action']}: {item['root']}", file=sys.stderr if args.json else sys.stdout)
-        if not args.force and input(
-            "Publish these artifacts, retaining the source copies? [y/N] "
-        ).lower() not in {"y", "yes"}:
+        if not args.force and not confirm("Publish these artifacts, retaining the source copies?"):
             return
         result = maintenance(
             control,
             bids,
-            checkout=CHECKOUT,
+            checkout=site_config.CHECKOUT,
             operation="promotion_publish",
             report=report,
             replace=args.replace,

@@ -201,9 +201,10 @@ their immutable execution snapshot.
 ### Resource and Slurm settings
 
 `workbench` names `wb_command`, and `wb_view` is expected beside it. `qunex`,
-`synthstrip`, `synbold`, `gradient_unwarp`, `fastsurfer`, `synthstroke_data`,
-and `mni_template` can override individual resources that are otherwise derived
-from their parent directories. `binds` is a TOML list. Generic defaults omit
+`synthstrip`, `synbold`, `gradient_unwarp`, `freesurfer`, `fastsurfer`,
+`workbench_image`, `fastsurfer_data`, `synthstroke_data`, and `mni_template` can
+override individual resources that are otherwise derived from their parent
+directories. `binds` is a TOML list. Generic defaults omit
 CLIMBLAB's `/juice6` bind.
 
 `partition` routes scientific workers. `viewing_partition` separately routes
