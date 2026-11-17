@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from nro.engine.io import atomic_write_json
-from nro.orchestration import recovery_lock, scheduler_bus, scheduler_client
+from nro.orchestration import recovery_lock, scheduler_bus, scheduler_client, slurm_jobs
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.recovery_lock import RecoveryLock
 from nro.orchestration.registry import RegistryLock
@@ -164,7 +164,7 @@ def test_launch_claim_recovers_ended_job_despite_orphaned_recovery_dir(tmp_path,
     legacy = service / "launch.recovery"
     legacy.mkdir()
     age(legacy, 86400)
-    monkeypatch.setattr(scheduler_bus, "_slurm_terminal", lambda job_id: job_id == "26594578")
+    monkeypatch.setattr(slurm_jobs, "job_terminal", lambda job_id: job_id == "26594578")
 
     claim = scheduler_bus.claim_launch(control)
 
@@ -209,7 +209,7 @@ def test_exchange_fails_when_ended_allocation_is_not_replaced(monkeypatch, tmp_p
         scheduler_bus, "read_launch", lambda _control: {"token": "dead", "job_id": "26594578"}
     )
     monkeypatch.setattr(scheduler_bus, "_launch_abandoned", lambda _record: True)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
 
     with pytest.raises(RuntimeError, match="allocation 26594578 ended before the scheduler"):
         scheduler_client.exchange(
@@ -233,7 +233,7 @@ def test_exchange_keeps_waiting_while_allocation_is_pending(monkeypatch, tmp_pat
         return False
 
     monkeypatch.setattr(scheduler_bus, "_launch_abandoned", pending)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
 
     with pytest.raises(KeyboardInterrupt):
         scheduler_client.exchange(
@@ -242,7 +242,7 @@ def test_exchange_keeps_waiting_while_allocation_is_pending(monkeypatch, tmp_pat
     assert len(checks) == 3
 
 
-def test_ensure_coordinator_starts_scheduler_with_command_options(monkeypatch, tmp_path):
+def test_service_available_starts_scheduler_with_command_options(monkeypatch, tmp_path):
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
     launches = []
     monkeypatch.setattr(scheduler_bus, "read_active", lambda _control: None)
@@ -254,7 +254,30 @@ def test_ensure_coordinator_starts_scheduler_with_command_options(monkeypatch, t
     )
     options = {"partition": "gpu", "account": None, "time": 2, "memory": 4, "cpus": 1}
 
-    assert scheduler_client._ensure_coordinator(
+    assert scheduler_client._service_available(
         endpoint, require_service=True, start_epoch=True, scheduler_options=options
     )
     assert launches == [options]
+
+
+def test_process_state_distinguishes_absent_present_and_unknown(monkeypatch) -> None:
+    import errno
+
+    from nro.orchestration import local_processes
+
+    assert local_processes.process_state(os.getpid()) == "present"
+    outcomes = {
+        1: ProcessLookupError(),
+        2: PermissionError(),
+        3: OSError(errno.EIO, "unavailable"),
+    }
+
+    def kill(pid, signal):
+        raise outcomes[pid]
+
+    monkeypatch.setattr(local_processes.os, "kill", kill)
+    assert [local_processes.process_state(pid) for pid in (1, 2, 3)] == [
+        "absent",
+        "present",
+        "unknown",
+    ]

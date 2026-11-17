@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from nro.engine.io import atomic_write_json, read_json
+from nro.orchestration.local_processes import process_state
 
 PROTOCOL = 1
 LEASE_SECONDS = 120.0
@@ -181,17 +182,14 @@ class RecoveryLock:
                 pid = int(record["pid"])
             except (KeyError, TypeError, ValueError):
                 return _unowned_expired(self.path)
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
+            state = process_state(pid)
+            if state == "absent":
                 return True
-            except PermissionError:
-                # The PID belongs to another user. Shared control directories
-                # admit several users, so only the start time can tell a live
-                # owner from a reused PID.
-                pass
-            except OSError:
+            if state == "unknown":
                 return False
+            # The PID may belong to another user, or have been reused. Shared
+            # control directories admit several users, so only the start time
+            # can tell a live owner from a reused PID.
             started = record.get("process_start")
             return started is not None and process_start(pid) not in {None, started}
         try:

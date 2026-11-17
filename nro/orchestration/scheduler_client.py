@@ -378,14 +378,19 @@ def _run_once(endpoint: SchedulerEndpoint, record: dict, *, durable: bool = True
         raise
 
 
-def _ensure_coordinator(
+def _service_available(
     endpoint: SchedulerEndpoint,
     *,
     require_service: bool,
     start_epoch: bool = False,
     scheduler_options: dict | None = None,
 ) -> bool:
-    """Provide a live service or a fenced one-shot coordinator as requested.
+    """Report whether a scheduler service will handle the request, starting one if required.
+
+    With ``require_service``, a missing service is started and True is returned,
+    unless an intentional shutdown is pending, which returns False. Without it,
+    False means no service is running and the caller must run the request with a
+    one-shot coordinator. ``start_epoch`` clears a pending shutdown first.
 
     ``scheduler_options`` configure the scheduler allocation when this call
     starts one. They have no effect on a scheduler that is already running.
@@ -461,7 +466,7 @@ def _exchange(
     record = create_message(message, kind=kind)
     message_id = str(record["id"])
     try:
-        service_available = _ensure_coordinator(
+        service_available = _service_available(
             endpoint,
             require_service=require_service,
             start_epoch=start_epoch,
@@ -590,7 +595,7 @@ def _exchange(
                 f"Central scheduler did not respond within {timeout:g} seconds; {disposition}"
             )
         if now - last_recovery_check >= 5.0:
-            service_available = _ensure_coordinator(
+            service_available = _service_available(
                 endpoint,
                 require_service=require_service,
                 start_epoch=False,
@@ -859,18 +864,12 @@ def logs(
         "bidsify" in requested_modules
         and not selection["workflows"]
         and not selection.get("lineages")
+        and set(selection["selectors"]) <= {"ses"}
     ):
         sessions = selection["selectors"].get("ses", ())
         control_paths = ControlPaths(control)
         paths.extend(
-            str(
-                (
-                    control_paths.ingestion
-                    if row["branch"] == "main"
-                    else control_paths.branch(row["branch"]) / "ingestion"
-                )
-                / f"{row['id']}.log"
-            )
+            str(control_paths.ingestion_for(row["branch"]) / f"{row['id']}.log")
             for row in report.get("ingestion", [])
             if (
                 not selection.get("ingestion_projects")

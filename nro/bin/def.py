@@ -17,6 +17,7 @@ from nro.definitions.migrations import (
 )
 from nro.definitions.repository import create_store, validate_store
 from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
+from nro.engine.cli import confirm
 from nro.site import configuration as site
 
 TYPED_KINDS = frozenset({"model", "workflow", "markup", *CONFIGURATION_CLASSES})
@@ -157,7 +158,7 @@ def _rm_file(args: argparse.Namespace) -> tuple[Path, str]:
     if not args.yes:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             raise ValueError("Removal requires interactive confirmation or --yes")
-        if input("Remove this definition? [y/N] ").strip().lower() not in {"y", "yes"}:
+        if not confirm("Remove this definition?"):
             print("Cancelled; the stored definition is unchanged.")
             return root, "Unchanged"
     backup = delete_definition(

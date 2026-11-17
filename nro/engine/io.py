@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -60,6 +61,12 @@ def flatten_paths(value: Any) -> list[Path]:
     if isinstance(value, dict):
         return [path for item in value.values() for path in flatten_paths(item)]
     return []
+
+
+def file_sha256(path: Path) -> str:
+    """Return the hexadecimal SHA-256 digest of a file, read in bounded chunks."""
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def atomic_copy_file(source: Path, destination: Path) -> None:

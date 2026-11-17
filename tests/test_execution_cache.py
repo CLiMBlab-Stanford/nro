@@ -17,7 +17,7 @@ from nro.orchestration.registry import Registry
 
 @pytest.fixture
 def cache(tmp_path):
-    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry = Registry.for_project("demo")
     registry.initialize()
     source = registry.paths.control / "shared/cache/implementations" / ("a" * 64)
     source.mkdir(parents=True)
@@ -266,11 +266,11 @@ def test_confirmed_purge_rechecks_scheduler_state(cache, monkeypatch, capsys):
     registry, source, site = cache
     monkeypatch.setattr(purge, "page_text", lambda _: None)
 
-    def confirm():
+    def confirm(_question):
         demand(registry)
         return True
 
-    monkeypatch.setattr(purge, "_confirm", confirm)
+    monkeypatch.setattr(purge, "confirm", confirm)
     purge_main(
         [
             "--cache",

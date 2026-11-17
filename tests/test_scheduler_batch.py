@@ -302,7 +302,6 @@ def test_failed_request_logs_traceback_and_keeps_reply(monkeypatch, capsys, tmp_
     record = {"id": "message-1", "payload": {"project": "demo", "operation": "run"}}
 
     response = scheduler_service._message_response(
-        None,
         record,
         values={"bids": tmp_path / "bids", "registry": tmp_path / "registry"},
     )

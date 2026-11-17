@@ -1,4 +1,4 @@
-"""Validate the plain semantic versions used for nro main releases."""
+"""Read the running nro version and validate main-release version numbers."""
 
 from __future__ import annotations
 

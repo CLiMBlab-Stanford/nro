@@ -20,13 +20,12 @@ def command(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(branch, "checkout_identity", identity)
     monkeypatch.setattr(branches, "checkout_identity", identity)
-    bids = tmp_path / "BIDS"
 
     def invoke(*args):
         branch.main([*map(str, args), "--json"])
         return json.loads(capsys.readouterr().out)
 
-    return invoke, identities, BranchStore(RegistryPaths.for_project("", bids_root=bids).control)
+    return invoke, identities, BranchStore(RegistryPaths.for_project("").control)
 
 
 def test_list_does_not_initialize_store(command):

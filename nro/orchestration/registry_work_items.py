@@ -16,25 +16,10 @@ from nro.orchestration.artifact_resolution import (
     output_contracts_overlap,
     validate_output_ownership,
 )
-from nro.orchestration.sql_values import JSON_VALUES, json_values
+from nro.orchestration.sql_values import JSON_VALUES, json_values, rows_for_values
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import WorkItemSpec
-
-
-def _rows_for_values(
-    database: sqlite3.Connection,
-    statement: str,
-    values: Sequence[object],
-    *,
-    chunk_size: int = 500,
-):
-    """Yield rows from a query whose ``{placeholders}`` list binds ``values``."""
-    for offset in range(0, len(values), chunk_size):
-        chunk = values[offset : offset + chunk_size]
-        yield from database.execute(
-            statement.format(placeholders=JSON_VALUES), (json_values(chunk),)
-        )
 
 
 def work_item_relative_directory(work_item: Mapping[str, object]) -> Path:
@@ -66,7 +51,7 @@ def upsert_work_item_graph(
     lineage_ids = tuple({spec.module_lineage_id for spec, _record in work_item_records})
     lineages = {
         int(row["id"]): str(row["directory_label"])
-        for row in _rows_for_values(
+        for row in rows_for_values(
             database,
             "SELECT id,directory_label FROM module_lineages WHERE id IN ({placeholders})",
             lineage_ids,
@@ -75,7 +60,7 @@ def upsert_work_item_graph(
     work_item_keys = tuple(spec.key for spec, _record in work_item_records)
     existing_by_key = {
         str(row["work_item_key"]): row
-        for row in _rows_for_values(
+        for row in rows_for_values(
             database,
             """SELECT id, work_item_key, module, module_lineage_id, scope, resource_class,
                       revision_fingerprint, artifact_contract_json, artifact_fingerprint,
@@ -88,7 +73,7 @@ def upsert_work_item_graph(
     existing_ids = tuple(int(row["id"]) for row in existing_by_key.values())
     completions = {
         int(row["work_item_id"]): row
-        for row in _rows_for_values(
+        for row in rows_for_values(
             database,
             """SELECT work_item_id,config_id,config_fingerprint,resolved_yaml FROM completions
                WHERE work_item_id IN ({placeholders})""",
@@ -100,7 +85,7 @@ def upsert_work_item_graph(
         {str(spec.output_root.expanduser().resolve()) for spec, _record in work_item_records}
     )
     if output_roots:
-        for row in _rows_for_values(
+        for row in rows_for_values(
             database,
             """SELECT work_item_key, output_root, output_prefix, expected_outputs_json
                 FROM work_items WHERE output_root IN ({placeholders})""",

@@ -13,6 +13,7 @@ from nro.definitions.store import ConfigStore
 from nro.engine.cli import (
     CoreSelection,
     add_core_selection_arguments,
+    confirm,
     core_selection,
     matches_module_lineage,
     matches_work_item_selectors,
@@ -50,11 +51,7 @@ def _confirm_repair_with_workers(activity: dict) -> bool:
         f"worker(s), {submissions} active/pending submission(s)).",
         file=sys.stderr,
     )
-    try:
-        response = input("Stop all workers and continue with repair? [y/N] ")
-    except (EOFError, KeyboardInterrupt):
-        return False
-    return response.strip().lower() in {"y", "yes"}
+    return confirm("Stop all workers and continue with repair?")
 
 
 def _unavailable_records(plan: PlanningResult) -> list[dict[str, str]]:
@@ -430,22 +427,17 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         if record.get("mode") == "branch":
             from nro.orchestration.branch_repair import repair_checkout
 
-            def confirm(activity):
+            def confirm_repair(activity):
                 print(
                     f"Repair will stop {activity['attempts']} active attempt(s) for branch {activity['branch']}. "
                     "Other branches and the shared worker pool remain available.",
                     file=sys.stderr,
                 )
-                try:
-                    return input(
-                        "Stop these attempts and repair this branch? [y/N] "
-                    ).strip().lower() in {"y", "yes"}
-                except (EOFError, KeyboardInterrupt):
-                    return False
+                return confirm("Stop these attempts and repair this branch?")
 
             try:
                 result = repair_checkout(
-                    Path(values["registry"]), bids_root, site.CHECKOUT, confirm=confirm
+                    Path(values["registry"]), bids_root, site.CHECKOUT, confirm=confirm_repair
                 )
             except (ValueError, RuntimeError, OSError) as error:
                 raise SystemExit(str(error)) from error

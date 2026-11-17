@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
 import shlex
 import shutil
@@ -19,7 +18,7 @@ from nro.engine.functional_references import (
     resolve_func_references,
 )
 from nro.engine.image_paths import image_source_paths
-from nro.engine.io import atomic_write_text, read_public_json, write_public_json
+from nro.engine.io import atomic_write_text, file_sha256, read_public_json, write_public_json
 from nro.engine.manifests import create_json_step
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
@@ -283,16 +282,7 @@ def _shell_array(name: str, values: Sequence[object]) -> str:
     return f"{name}=({' '.join(shlex.quote(render(value)) for value in values)})"
 
 
-def _content_digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while block := stream.read(8 * 1024 * 1024):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def _structural_configuration_text(
-    calibration: MsmAllCalibration,
     *,
     subject: str,
     work_dir: Path,
@@ -438,7 +428,6 @@ def add_msmall_plan(
 
     def write_structural_configuration() -> None:
         text = _structural_configuration_text(
-            calibration,
             subject=subject,
             work_dir=branch,
             license_path=license_path,
@@ -459,7 +448,7 @@ def add_msmall_plan(
         )
 
     def write_input_identities() -> None:
-        content_digests = {path: _content_digest(path) for path in hcp_inputs}
+        content_digests = {path: file_sha256(path) for path in hcp_inputs}
         write_public_json(
             input_identities,
             {
@@ -606,7 +595,7 @@ def add_msmall_plan(
                 parameters={
                     "scientific": parameters,
                     "implementation_sha256": {
-                        path.name: _content_digest(path) for path in implementations
+                        path.name: file_sha256(path) for path in implementations
                     },
                 },
             )

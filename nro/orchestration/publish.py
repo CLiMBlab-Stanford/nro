@@ -10,18 +10,11 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from nro.engine.io import file_sha256
 from nro.engine.paths import module_artifact_root
 from nro.orchestration.completion_records import completion_record
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.registry import Registry, utcnow
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(8 * 1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _derivative_root(project_root: Path, work_item: dict) -> Path:
@@ -135,9 +128,9 @@ def publish(
                 relative = source.relative_to(root)
                 target = staging / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
-                source_digest = _sha256(source)
+                source_digest = file_sha256(source)
                 shutil.copy2(source, target)
-                target_digest = _sha256(target)
+                target_digest = file_sha256(target)
                 if target_digest != source_digest:
                     raise RuntimeError(f"Checksum mismatch while publishing {source}")
                 copied.append(
@@ -191,7 +184,7 @@ def publish(
             ):
                 raise RuntimeError("Live derivative completion changed during publication")
         for item in copied:
-            if _sha256(Path(item["source"])) != item["sha256"]:
+            if file_sha256(Path(item["source"])) != item["sha256"]:
                 raise RuntimeError("Live derivative output changed during publication")
         os.replace(staging, destination)
         return destination

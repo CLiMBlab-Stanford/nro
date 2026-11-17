@@ -6,6 +6,7 @@ import pytest
 from nro.bin.dev import build_parser
 from nro.development import TestSelection as Selection
 from nro.development import (
+    _matches,
     changed_paths,
     load_scopes,
     run_selection,
@@ -145,7 +146,11 @@ def test_local_test_selection_checks_formatting_and_lint_first(tmp_path, monkeyp
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(subprocess, "run", run)
-    selection = Selection(("example",), ("tests/test_example.py",), (), False)
+    selection = Selection(
+        ("example",), ("tests/test_example.py", "tests/test_deleted.py"), (), False
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_example.py").write_text("", encoding="utf-8")
 
     assert run_selection(tmp_path, selection) == 0
     assert commands == [
@@ -160,18 +165,51 @@ def test_local_test_selection_checks_formatting_and_lint_first(tmp_path, monkeyp
             "docs/conf.py",
         ),
         (commands[0][0], "-m", "ruff", "check", "nro", "tests", "docs/conf.py"),
-        (commands[0][0], "-m", "pytest", "tests/test_example.py"),
+        (
+            commands[0][0],
+            "-m",
+            "pytest",
+            "-m",
+            "integration or not integration",
+            "tests/test_example.py",
+        ),
     ]
 
 
-def test_every_tracked_python_and_policy_file_has_a_scope() -> None:
+def _tracked_files(*, include_new: bool = False) -> list[str]:
+    command = ["git", "-C", str(ROOT), "ls-files", "-z"]
+    if include_new:
+        command.extend(("--cached", "--others", "--exclude-standard"))
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    return [path for path in result.stdout.split("\0") if path]
+
+
+def test_every_tracked_file_has_a_scope() -> None:
     scopes = load_scopes(ROOT / "development/test-scopes.toml")
-    tracked = [
-        str(path.relative_to(ROOT))
-        for base in (ROOT / "nro", ROOT / "tests")
-        for path in base.rglob("*.py")
-    ]
-    tracked.extend(("install", "pyproject.toml", "AGENTS.md", "README.md"))
 
-    selection = select_tests(scopes, tracked)
+    selection = select_tests(scopes, _tracked_files())
+
     assert selection.unmapped == ()
+
+
+def test_every_scope_path_matches_a_tracked_file() -> None:
+    scopes = load_scopes(ROOT / "development/test-scopes.toml")
+    tracked = _tracked_files(include_new=True)
+
+    unmatched = [
+        f"{scope.name}: {pattern}"
+        for scope in scopes.values()
+        for pattern in scope.paths
+        if not any(_matches(path, pattern) for path in tracked)
+    ]
+
+    assert unmatched == []
+
+
+def test_changed_test_module_is_selected_with_its_sphere() -> None:
+    scopes = load_scopes(ROOT / "development/test-scopes.toml")
+
+    selection = select_tests(scopes, ("tests/test_freshen.py",))
+
+    assert "orchestration" in selection.spheres
+    assert "tests/test_freshen.py" in selection.tests

@@ -12,12 +12,8 @@ from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_cache import cache_lock, service_lease
 from nro.orchestration.execution_pins import capture_execution
 from nro.orchestration.source_snapshots import SourceSnapshot, execution_source_root
-from nro.site.configuration import (
-    CHECKOUT,
-    installation_record,
-    protected_site_fingerprint,
-    settings,
-)
+from nro.site import configuration as site_config
+from nro.site.configuration import installation_record, protected_site_fingerprint, settings
 
 
 def launch_review(argv: list[str]) -> None:
@@ -25,7 +21,7 @@ def launch_review(argv: list[str]) -> None:
     values = settings()[0]
     control = Path(values["registry"])
     topology = BranchStore(control).read().topology
-    name = topology.require_checkout(CHECKOUT)
+    name = topology.require_checkout(site_config.CHECKOUT)
     record = installation_record()
     if record and not record.get("ready"):
         raise ValueError("Finish installation before starting ingestion")
@@ -33,11 +29,11 @@ def launch_review(argv: list[str]) -> None:
     if name == "main":
         from nro.orchestration.releases import ReleaseStore
 
-        release = ReleaseStore(BranchStore(control)).require_installed(CHECKOUT, record)
+        release = ReleaseStore(BranchStore(control)).require_installed(site_config.CHECKOUT, record)
     with ExitStack() as stack:
         descriptors = []
         if record:
-            lock = stack.enter_context((CHECKOUT / ".nro-install.lock").open("rb"))
+            lock = stack.enter_context((site_config.CHECKOUT / ".nro-install.lock").open("rb"))
             try:
                 fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError as error:
@@ -57,7 +53,7 @@ def launch_review(argv: list[str]) -> None:
             pin = dict(
                 branch=name,
                 registry_id=topology.records[name].registry_id,
-                checkout=str(CHECKOUT),
+                checkout=str(site_config.CHECKOUT),
                 source_root=str(source.root),
                 source_digest=source.digest,
                 site=str(site),

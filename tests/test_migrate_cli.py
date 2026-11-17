@@ -37,7 +37,7 @@ def _configure(monkeypatch, reports):
         lambda: ({"bids": "/bids", "registry": "/registry"}, None),
     )
     monkeypatch.setattr("nro.orchestration.scheduler_client.maintenance", maintenance)
-    monkeypatch.setattr("nro.bin.migrate.package_version", lambda: "1.2.3")
+    monkeypatch.setattr("nro.bin.migrate.application_version", lambda: "1.2.3")
     return calls
 
 

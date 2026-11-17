@@ -413,7 +413,7 @@ def _project_inventory(
 
 
 def _incomplete_journal(control: ControlPaths, old: str, new: str) -> tuple[Path, dict] | None:
-    root = control.shared / "project-renames"
+    root = control.project_renames
     matches = []
     for path in root.glob("*/journal.json"):
         try:
@@ -1231,7 +1231,7 @@ def execute(
     definition_updates = prepared.definition_updates
     event_moves = prepared.event_moves
     report_phase("Preparing project rename recovery journal")
-    journal = ControlPaths(registry.paths.control).shared / "project-renames" / uuid.uuid4().hex
+    journal = ControlPaths(registry.paths.control).project_renames / uuid.uuid4().hex
     ensure_shared_directory(journal)
     atomic_write_json(
         journal / "journal.json",

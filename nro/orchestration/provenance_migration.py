@@ -42,6 +42,7 @@ from nro.engine.references import (
 from nro.engine.source_metadata import semantic_metadata_snapshot
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.branches import BranchPaths
+from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.ownership import (
     LEGACY_OWNERSHIP_VERSION,
     LINEAGE_RECORD_NAME,
@@ -313,9 +314,9 @@ def _bids_roots(registry, site_values: Mapping[str, object] | None) -> tuple[Pat
 
 
 def _journal_root(registry) -> Path:
-    # Retain the established private location so an interrupted migration from
-    # an earlier release cannot be orphaned during this interface expansion.
-    return Path(registry.paths.control) / "shared" / "provenance-migrations"
+    # Keep this location stable so that interrupted migrations started by older
+    # releases are still found and recovered.
+    return ControlPaths(Path(registry.paths.control)).provenance_migrations
 
 
 def _is_source_sidecar(path: Path, project_root: Path) -> bool:

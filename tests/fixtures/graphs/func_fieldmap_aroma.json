@@ -1,0 +1,2870 @@
+{
+ "module": "Functional Module",
+ "steps": [
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/initialized.complete",
+    "<ROOT>/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/_qunex_home",
+    "<ROOT>/gradient.sif",
+    "<ROOT>/license",
+    "<ROOT>/synbold.sif"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "initialized-complete-8f592e141f80",
+    "inputs": [],
+    "kind": "python",
+    "name": "Initialize Functional Outputs",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/initialized.complete"
+    ]
+   },
+   "name": "Initialize Functional Outputs",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/configuration.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "initialized-complete-8f592e141f80"
+    ],
+    "id": "configuration-json-8bf6aac7c39e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/initialized.complete"
+    ],
+    "kind": "python",
+    "name": "Write Functional Configuration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/configuration.json"
+    ]
+   },
+   "name": "Write Functional Configuration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/dependencies.complete"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "dependencies-complete-750644b39de0",
+    "inputs": [],
+    "kind": "python",
+    "name": "Check Functional Dependencies",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/dependencies.complete"
+    ]
+   },
+   "name": "Check Functional Dependencies",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/BIDS/demo/sub-1/ses-1/func/sub-1_ses-1_task-rest_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/motion",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/motion/first_volume.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/motion/motion.par",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/motion/motion_estimation.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "first-volume-nii-gz-ae9b9c91ab8c",
+    "inputs": [
+     "<ROOT>/BIDS/demo/sub-1/ses-1/func/sub-1_ses-1_task-rest_bold.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Estimate Native Motion for MARSS",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/motion/first_volume.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/motion/motion.par"
+    ]
+   },
+   "name": "Estimate Native Motion for MARSS",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/BIDS/demo/sub-1/ses-1/func/sub-1_ses-1_task-rest_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssAfter_correlation.tsv",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifactMean_statmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_loadings.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_timeseries.tsv",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssBefore_correlation.tsv",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssCorrelation_qc.png",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssSliceScore_statmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marss_qc.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/motion/motion.par",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "first-volume-nii-gz-ae9b9c91ab8c"
+    ],
+    "id": "sub-1-ses-1-task-rest-desc-marss-bold-nii-gz-0222e0d5bd35",
+    "inputs": [
+     "<ROOT>/BIDS/demo/sub-1/ses-1/func/sub-1_ses-1_task-rest_bold.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/motion/motion.par"
+    ],
+    "kind": "python",
+    "name": "Diagnose and Correct Simultaneous-Slice Artifact",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marss_qc.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_loadings.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_timeseries.tsv",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifactMean_statmap.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssSliceScore_statmap.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssBefore_correlation.tsv",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssAfter_correlation.tsv",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssCorrelation_qc.png"
+    ],
+    "scientific_signature": "{\"diagnostic_method\":\"equal_target_slice_fisher_z_v1\",\"minimum_multiband_factor\":6,\"mode\":\"auto\",\"source_metadata\":{\"PhaseEncodingDirection\":\"j\",\"RepetitionTime\":2.0,\"TotalReadoutTime\":0.05}}"
+   },
+   "name": "Diagnose and Correct Simultaneous-Slice Artifact",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/motion.par",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/provisional",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/provisional/sub-1_ses-1_task-rest_bold_mc_provisional.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-nonsteadyDetection_boldref.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz.mat.complete",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz.mat/MAT_0000",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz.mat/MAT_0001",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz.mat/MAT_0002",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz.mat/MAT_0003",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz.mat/MAT_0004",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc_bootstrap_ref.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-desc-marss-bold-nii-gz-0222e0d5bd35"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz"
+    ],
+    "kind": "directory",
+    "name": "Robust BOLD Reference and Motion Correction",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-nonsteadyDetection_boldref.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/motion.par",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz.mat.complete",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/.nro_complete"
+    ]
+   },
+   "name": "Robust BOLD Reference and Motion Correction",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/epi_to_selected.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/header_init.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/header_init_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/robust_in_sbref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/robust_support_in_sbref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/robust_support_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/robust_to_sbref.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/sbref_3d.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/sbref_support_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_to_epi.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selection.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae"
+    ],
+    "id": "selected-reference-nii-gz-195aa2a7faff",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Select Functional Registration Reference",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/epi_to_selected.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_to_epi.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selection.json"
+    ],
+    "scientific_signature": "{\"epi_metadata\":{\"PhaseEncodingDirection\":\"j\",\"RepetitionTime\":2.0,\"TotalReadoutTime\":0.05},\"maximum_displacement_millimeters\":20.0,\"maximum_rotation_degrees\":10.0,\"minimum_intensity_correlation\":0.4,\"minimum_support_overlap\":0.8,\"sbref_metadata\":{}}"
+   },
+   "name": "Select Functional Registration Reference",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-L_from-fsnative_to-fsaverage6_sphere.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-L_from-fsnative_to-fsaverage6_sphere.surf.gii\"]",
+    "dependencies": [],
+    "id": "subject-hemi-l-from-fsnative-to-fsaverage6-sphere-surf-gii-263159f69d9f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Mris Convert",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-L_from-fsnative_to-fsaverage6_sphere.surf.gii"
+    ]
+   },
+   "name": "Mris Convert",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/L.sphere.surf.gii",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/fsaverage6_hemi-L_sphere.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "fsaverage6-hemi-l-sphere-surf-gii-d26f18e54078",
+    "inputs": [
+     "<ROOT>/L.sphere.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Stage fsaverage6 Hemisphere L Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/fsaverage6_hemi-L_sphere.surf.gii"
+    ]
+   },
+   "name": "Stage fsaverage6 Hemisphere L Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-R_from-fsnative_to-fsaverage6_sphere.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mris_convert\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-R_from-fsnative_to-fsaverage6_sphere.surf.gii\"]",
+    "dependencies": [],
+    "id": "subject-hemi-r-from-fsnative-to-fsaverage6-sphere-surf-gii-936a1fa54156",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Mris Convert",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-R_from-fsnative_to-fsaverage6_sphere.surf.gii"
+    ]
+   },
+   "name": "Mris Convert",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/fsaverage6_hemi-R_sphere.surf.gii",
+    "<ROOT>/R.sphere.surf.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "fsaverage6-hemi-r-sphere-surf-gii-13dbfac1a2dc",
+    "inputs": [
+     "<ROOT>/R.sphere.surf.gii"
+    ],
+    "kind": "python",
+    "name": "Stage fsaverage6 Hemisphere R Sphere",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/fsaverage6_hemi-R_sphere.surf.gii"
+    ]
+   },
+   "name": "Stage fsaverage6 Hemisphere R Sphere",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-0.nii.gz",
+    "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-1.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/Jacobian",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/MotionMatrix",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/acqparams.txt",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/fieldmap_Hz.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized/Jacobian_0001.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized/Jacobian_0002.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized/MotionMatrix",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized/MotionMatrix_0001.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized/MotionMatrix_0002.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized/WarpField_0001.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized/WarpField_0002.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_merged.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/topup_outputs.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/topup_results_fieldcoef.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/topup_spec.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "topup-outputs-json-324105b4bfaf",
+    "inputs": [
+     "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-0.nii.gz",
+     "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-1.nii.gz"
+    ],
+    "kind": "directory",
+    "name": "TOPUP Distortion Estimation Directory",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/topup_outputs.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/topup.complete"
+    ]
+   },
+   "name": "TOPUP Distortion Estimation Directory",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-0.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se_match_ref.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "se-match-ref-nii-gz-f81514b279c0",
+    "inputs": [
+     "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-0.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Extract Matching Distorted SE Reference",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se_match_ref.nii.gz"
+    ]
+   },
+   "name": "Extract Matching Distorted SE Reference",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/fixed_support_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff"
+    ],
+    "id": "fixed-support-mask-nii-gz-7fa134689db5",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Image Support Mask",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/fixed_support_mask.nii.gz"
+    ]
+   },
+   "name": "Image Support Mask",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/fixed_support_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/header_init.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/header_init.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/registered_wholebrain.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/rigid_registration_qc.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se_match_ref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "se-match-ref-nii-gz-f81514b279c0",
+     "fixed-support-mask-nii-gz-7fa134689db5"
+    ],
+    "id": "se2regref-6dof-mat-6e932513dc00",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se_match_ref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/fixed_support_mask.nii.gz"
+    ],
+    "kind": "directory",
+    "name": "Whole-Brain EPI Pose Registration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/registered_wholebrain.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/rigid_registration_qc.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof_qc/.nro_complete"
+    ]
+   },
+   "name": "Whole-Brain EPI Pose Registration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2se_6dof.mat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convert_xfm\",\"-inverse\",\"-omat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2se_6dof.mat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof.mat\"]",
+    "dependencies": [
+     "se2regref-6dof-mat-6e932513dc00"
+    ],
+    "id": "regref2se-6dof-mat-e0398452c37a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/se2regRef_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Convert Xfm",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2se_6dof.mat"
+    ]
+   },
+   "name": "Convert Xfm",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convert_xfm\",\"-omat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat\",\"-concat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized/MotionMatrix_0001.mat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2se_6dof.mat\"]",
+    "dependencies": [
+     "regref2se-6dof-mat-e0398452c37a"
+    ],
+    "id": "regref2topup-6dof-mat-20fa8e4cb30c",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/normalized/MotionMatrix_0001.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2se_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Convert Xfm",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat"
+    ]
+   },
+   "name": "Convert Xfm",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_6dof.mat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convert_xfm\",\"-inverse\",\"-omat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_6dof.mat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat\"]",
+    "dependencies": [
+     "regref2topup-6dof-mat-20fa8e4cb30c"
+    ],
+    "id": "topup2regref-6dof-mat-2f1bf874635c",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Convert Xfm",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_6dof.mat"
+    ]
+   },
+   "name": "Convert Xfm",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"fslmaths\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped.nii.gz\",\"-Tmedian\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz\"]",
+    "dependencies": [],
+    "id": "se-unwarped-median-nii-gz-ad287ac35f5a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Build Corrected SE Reference",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz"
+    ]
+   },
+   "name": "Build Corrected SE Reference",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_registrationReadout_shift_vox.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"fslmaths\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/fieldmap_Hz.nii.gz\",\"-mul\",\"0.05\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_registrationReadout_shift_vox.nii.gz\"]",
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a"
+    ],
+    "id": "regref-registrationreadout-shift-vox-nii-gz-a855f61073c1",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/fieldmap_Hz.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Build Target-Readout Voxel Shift Map",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_registrationReadout_shift_vox.nii.gz"
+    ]
+   },
+   "name": "Build Target-Readout Voxel Shift Map",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz\",\"--shiftmap\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_registrationReadout_shift_vox.nii.gz\",\"--shiftdir\",\"y\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout.nii.gz\"]",
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a",
+     "regref-registrationreadout-shift-vox-nii-gz-a855f61073c1"
+    ],
+    "id": "warpfield-regref-registrationreadout-nii-gz-88c2a94a8b49",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/fieldmap_Hz.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_registrationReadout_shift_vox.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Build Target-Readout TOPUP Warp",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout.nii.gz"
+    ]
+   },
+   "name": "Build Target-Readout TOPUP Warp",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_initial_topupSpace.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"applywarp\",\"--rel\",\"--interp\",\"spline\",\"--in\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz\",\"--warp\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_initial_topupSpace.nii.gz\",\"--premat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "regref2topup-6dof-mat-20fa8e4cb30c",
+     "se-unwarped-median-nii-gz-ad287ac35f5a",
+     "warpfield-regref-registrationreadout-nii-gz-88c2a94a8b49"
+    ],
+    "id": "regref-dc-initial-topupspace-nii-gz-a15af9bd76d3",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Warp Application",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_initial_topupSpace.nii.gz"
+    ]
+   },
+   "name": "Warp Application",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof_header.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof_header.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof_qc.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a",
+     "regref-dc-initial-topupspace-nii-gz-a15af9bd76d3"
+    ],
+    "id": "regref2topup-postdc-6dof-mat-5fd17f5a902f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_initial_topupSpace.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Refine Post-SDC EPI-to-SE Pose",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof_qc.json"
+    ],
+    "scientific_signature": "{\"maximum_rotation_degrees\":5.0,\"maximum_translation_millimeters\":5.0}"
+   },
+   "name": "Refine Post-SDC EPI-to-SE Pose",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_postdcRefined_6dof.mat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convert_xfm\",\"-omat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_postdcRefined_6dof.mat\",\"-concat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_6dof.mat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof.mat\"]",
+    "dependencies": [
+     "topup2regref-6dof-mat-2f1bf874635c",
+     "regref2topup-postdc-6dof-mat-5fd17f5a902f"
+    ],
+    "id": "topup2regref-postdcrefined-6dof-mat-3efd2bdbc7ba",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_6dof.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Convert Xfm",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_postdcRefined_6dof.mat"
+    ]
+   },
+   "name": "Convert Xfm",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/overlap_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a",
+     "regref2topup-postdc-6dof-mat-5fd17f5a902f"
+    ],
+    "id": "overlap-mask-nii-gz-1644cc373c8d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Native-Grid Image Overlap Mask",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/overlap_mask.nii.gz"
+    ]
+   },
+   "name": "Native-Grid Image Overlap Mask",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/moving_reference.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "regref2topup-postdc-6dof-mat-5fd17f5a902f"
+    ],
+    "id": "moving-reference-nii-gz-7271f35817a3",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write NIfTI in PE-Aligned ANTs Frame",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/moving_reference.nii.gz"
+    ]
+   },
+   "name": "Write NIfTI in PE-Aligned ANTs Frame",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/fixed_corrected_se.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a"
+    ],
+    "id": "fixed-corrected-se-nii-gz-45a87545f612",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write NIfTI in PE-Aligned ANTs Frame",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/fixed_corrected_se.nii.gz"
+    ]
+   },
+   "name": "Write NIfTI in PE-Aligned ANTs Frame",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/overlap_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/overlap_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "overlap-mask-nii-gz-1644cc373c8d"
+    ],
+    "id": "overlap-mask-nii-gz-a4882169ac40",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/overlap_mask.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write NIfTI in PE-Aligned ANTs Frame",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/overlap_mask.nii.gz"
+    ]
+   },
+   "name": "Write NIfTI in PE-Aligned ANTs Frame",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/ants/PEResidual_ants",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/ants/PEResidual_ants/ForwardWarp.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/ants/PEResidual_ants/InverseWarp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "moving-reference-nii-gz-7271f35817a3",
+     "fixed-corrected-se-nii-gz-45a87545f612",
+     "overlap-mask-nii-gz-a4882169ac40"
+    ],
+    "id": "forwardwarp-nii-gz-52ba594b1a46",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/moving_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/fixed_corrected_se.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/overlap_mask.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/overlap_mask.nii.gz"
+    ],
+    "kind": "directory",
+    "name": "ANTs SyN Registration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/ants/PEResidual_ants/ForwardWarp.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/ants/PEResidual_ants/InverseWarp.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/ants/PEResidual_ants/.nro_complete"
+    ]
+   },
+   "name": "ANTs SyN Registration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/ants/PEResidual_ants/ForwardWarp.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_itk_warp.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "regref2topup-postdc-6dof-mat-5fd17f5a902f",
+     "forwardwarp-nii-gz-52ba594b1a46"
+    ],
+    "id": "residual-itk-warp-nii-gz-abaf75020848",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/pe_aligned/ants/PEResidual_ants/ForwardWarp.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Restore ANTs Warp from PE-Aligned Frame",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_itk_warp.nii.gz"
+    ]
+   },
+   "name": "Restore ANTs Warp from PE-Aligned Frame",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_fnirt_warp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-convert-warpfield\",\"-from-itk\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_itk_warp.nii.gz\",\"-to-fnirt\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_fnirt_warp.nii.gz\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz\"]",
+    "dependencies": [
+     "regref2topup-postdc-6dof-mat-5fd17f5a902f",
+     "residual-itk-warp-nii-gz-abaf75020848"
+    ],
+    "id": "residual-fnirt-warp-nii-gz-84bc35a2b47b",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_itk_warp.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/regRef_dc_postRigid_topupSpace.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Wb Command",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_fnirt_warp.nii.gz"
+    ]
+   },
+   "name": "Wb Command",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_postRigid.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout.nii.gz\",\"--postmat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof.mat\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_postRigid.nii.gz\"]",
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a",
+     "warpfield-regref-registrationreadout-nii-gz-88c2a94a8b49",
+     "regref2topup-postdc-6dof-mat-5fd17f5a902f"
+    ],
+    "id": "warpfield-regref-registrationreadout-postrigid-nii-gz-c6b69526a687",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_postRigid.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_complete.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_postRigid.nii.gz\",\"--warp2\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_fnirt_warp.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_complete.nii.gz\"]",
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a",
+     "residual-fnirt-warp-nii-gz-84bc35a2b47b",
+     "warpfield-regref-registrationreadout-postrigid-nii-gz-c6b69526a687"
+    ],
+    "id": "warpfield-regref-registrationreadout-complete-nii-gz-36a77d9a6907",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_postRigid.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_fnirt_warp.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_complete.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_regRefSpace.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"--premat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_complete.nii.gz\",\"--postmat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_6dof.mat\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_regRefSpace.nii.gz\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "regref2topup-6dof-mat-20fa8e4cb30c",
+     "topup2regref-6dof-mat-2f1bf874635c",
+     "warpfield-regref-registrationreadout-complete-nii-gz-36a77d9a6907"
+    ],
+    "id": "warpfield-regrefspace-nii-gz-5e3d444c7631",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_regRef_registrationReadout_complete.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_regRefSpace.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/epiRef2topup_6dof.mat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convert_xfm\",\"-omat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/epiRef2topup_6dof.mat\",\"-concat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/epi_to_selected.mat\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "regref2topup-6dof-mat-20fa8e4cb30c"
+    ],
+    "id": "epiref2topup-6dof-mat-0fe37dd30478",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_6dof.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/epi_to_selected.mat"
+    ],
+    "kind": "command",
+    "name": "Convert Xfm",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/epiRef2topup_6dof.mat"
+    ]
+   },
+   "name": "Convert Xfm",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/bold_target_shift_vox.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"fslmaths\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/fieldmap_Hz.nii.gz\",\"-mul\",\"0.05\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/bold_target_shift_vox.nii.gz\"]",
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a"
+    ],
+    "id": "bold-target-shift-vox-nii-gz-8df1f09718ce",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/fieldmap_Hz.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Build Target-Readout Voxel Shift Map",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/bold_target_shift_vox.nii.gz"
+    ]
+   },
+   "name": "Build Target-Readout Voxel Shift Map",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_targetReadout.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz\",\"--shiftmap\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/bold_target_shift_vox.nii.gz\",\"--shiftdir\",\"y\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_targetReadout.nii.gz\"]",
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a",
+     "bold-target-shift-vox-nii-gz-8df1f09718ce"
+    ],
+    "id": "warpfield-bold-targetreadout-nii-gz-4959a4cda2c9",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/fieldmap_Hz.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/bold_target_shift_vox.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Build Target-Readout TOPUP Warp",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_targetReadout.nii.gz"
+    ]
+   },
+   "name": "Build Target-Readout TOPUP Warp",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_postRigid.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_targetReadout.nii.gz\",\"--postmat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof.mat\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_postRigid.nii.gz\"]",
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a",
+     "regref2topup-postdc-6dof-mat-5fd17f5a902f",
+     "warpfield-bold-targetreadout-nii-gz-4959a4cda2c9"
+    ],
+    "id": "warpfield-bold-postrigid-nii-gz-752fb982f7db",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_targetReadout.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/regRef2topup_postdc_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_postRigid.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_complete.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_postRigid.nii.gz\",\"--warp2\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_fnirt_warp.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_complete.nii.gz\"]",
+    "dependencies": [
+     "se-unwarped-median-nii-gz-ad287ac35f5a",
+     "residual-fnirt-warp-nii-gz-84bc35a2b47b",
+     "warpfield-bold-postrigid-nii-gz-752fb982f7db"
+    ],
+    "id": "warpfield-bold-complete-nii-gz-1fc4ede8a00a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/se_unwarped_median.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_postRigid.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/pe_residual_to_corrected_se/residual_fnirt_warp.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_complete.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_boldToRegRef.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"--premat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/epiRef2topup_6dof.mat\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_complete.nii.gz\",\"--postmat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_6dof.mat\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_boldToRegRef.nii.gz\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "topup2regref-6dof-mat-2f1bf874635c",
+     "epiref2topup-6dof-mat-0fe37dd30478",
+     "warpfield-bold-complete-nii-gz-1fc4ede8a00a"
+    ],
+    "id": "warpfield-boldtoregref-nii-gz-b0abe6e06375",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/WarpField_bold_complete.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/epiRef2topup_6dof.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_boldToRegRef.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"applywarp\",\"--rel\",\"--interp\",\"spline\",\"--in\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"--warp\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_regRefSpace.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc.nii.gz\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "warpfield-regrefspace-nii-gz-5e3d444c7631"
+    ],
+    "id": "regref-dc-nii-gz-556ef5a0523d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_regRefSpace.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Warp Application",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc.nii.gz"
+    ]
+   },
+   "name": "Warp Application",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc_ref_n4.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"N4BiasFieldCorrection\",\"-d\",\"3\",\"-i\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc.nii.gz\",\"-o\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc_ref_n4.nii.gz\"]",
+    "dependencies": [
+     "regref-dc-nii-gz-556ef5a0523d"
+    ],
+    "id": "regref-dc-ref-n4-nii-gz-ba90be66b3f6",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Bias Field Correction",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc_ref_n4.nii.gz"
+    ],
+    "scientific_signature": "{\"bias_field_retained\":false,\"mask_guided\":false,\"method\":\"N4BiasFieldCorrection\"}"
+   },
+   "name": "Bias Field Correction",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1.dat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"bbregister\",\"--s\",\"sub-1\",\"--mov\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc_ref_n4.nii.gz\",\"--bold\",\"--reg\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1.dat\",\"--fslmat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1.mat\",\"--surf\",\"white\",\"--init-coreg\",\"--6\"]",
+    "dependencies": [
+     "regref-dc-ref-n4-nii-gz-ba90be66b3f6"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-regref2t1-dat-0dc1e4a9ad95",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/regRef_dc_ref_n4.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Boundary-Based Registration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1.dat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1.mat"
+    ]
+   },
+   "name": "Boundary-Based Registration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_convert\",\"--voxsize\",\"1.000000\",\"1.000000\",\"1.000000\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz\"]",
+    "dependencies": [],
+    "id": "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/BIDS/demo/sub-1/ses-1/func/sub-1_ses-1_task-rest_bold.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Prepare T1 Target at EPI Resolution",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz"
+    ]
+   },
+   "name": "Prepare T1 Target at EPI Resolution",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fs_t1_grid_epi_vox.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"mri_convert\",\"--voxsize\",\"1.000000\",\"1.000000\",\"1.000000\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/T1.mgz\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fs_t1_grid_epi_vox.nii.gz\"]",
+    "dependencies": [],
+    "id": "sub-1-ses-1-task-rest-bold-fs-t1-grid-epi-vox-nii-gz-006aa319cc68",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer/sub-1/mri/T1.mgz",
+     "<ROOT>/BIDS/demo/sub-1/ses-1/func/sub-1_ses-1_task-rest_bold.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Prepare T1 Target at EPI Resolution",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fs_t1_grid_epi_vox.nii.gz"
+    ]
+   },
+   "name": "Prepare T1 Target at EPI Resolution",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fsT1ToT1w.dat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fsT1ToT1w.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fs_t1_grid_epi_vox.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"tkregister2\",\"--mov\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fs_t1_grid_epi_vox.nii.gz\",\"--targ\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz\",\"--regheader\",\"--reg\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fsT1ToT1w.dat\",\"--noedit\",\"--fslregout\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fsT1ToT1w.mat\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "sub-1-ses-1-task-rest-bold-fs-t1-grid-epi-vox-nii-gz-006aa319cc68"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-fst1tot1w-mat-702f22b8f7de",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fs_t1_grid_epi_vox.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Tkregister2",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fsT1ToT1w.mat"
+    ]
+   },
+   "name": "Tkregister2",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1w.mat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convert_xfm\",\"-omat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1w.mat\",\"-concat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fsT1ToT1w.mat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1.mat\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-regref2t1-dat-0dc1e4a9ad95",
+     "sub-1-ses-1-task-rest-bold-fst1tot1w-mat-702f22b8f7de"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-regref2t1w-mat-5cc71ab4d131",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_fsT1ToT1w.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1.mat"
+    ],
+    "kind": "command",
+    "name": "Convert Xfm",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1w.mat"
+    ]
+   },
+   "name": "Convert Xfm",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-t1-brain-mask-nii-gz-422141cce0db",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Mask Resampling",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_brain_mask.nii.gz"
+    ]
+   },
+   "name": "Mask Resampling",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"flirt\",\"-in\",\"<ROOT>/template.nii.gz\",\"-ref\",\"<ROOT>/template.nii.gz\",\"-applyisoxfm\",\"2\",\"-interp\",\"trilinear\",\"-out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz\"]",
+    "dependencies": [],
+    "id": "sub-1-ses-1-task-rest-bold-mni-2mm-nii-gz-24eeac95f89c",
+    "inputs": [
+     "<ROOT>/template.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Linear Registration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz"
+    ]
+   },
+   "name": "Linear Registration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_linear.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"flirt\",\"-in\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"-ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz\",\"-applyxfm\",\"-init\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1w.mat\",\"-out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_linear.nii.gz\",\"-interp\",\"trilinear\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "sub-1-ses-1-task-rest-bold-regref2t1w-mat-5cc71ab4d131"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-regref-in-t1-linear-nii-gz-bfa1166844f4",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1w.mat"
+    ],
+    "kind": "command",
+    "name": "Linear Registration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_linear.nii.gz"
+    ]
+   },
+   "name": "Linear Registration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_regRefSpace.nii.gz\",\"--postmat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1w.mat\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz\"]",
+    "dependencies": [
+     "warpfield-regrefspace-nii-gz-5e3d444c7631",
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "sub-1-ses-1-task-rest-bold-regref2t1w-mat-5cc71ab4d131"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-regreftot1wbase-warp-nii-gz-67c058f4340d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_regRefSpace.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1w.mat"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_affine.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"applywarp\",\"--rel\",\"--interp\",\"spline\",\"--in\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz\",\"--warp\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_affine.nii.gz\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "sub-1-ses-1-task-rest-bold-regreftot1wbase-warp-nii-gz-67c058f4340d"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-regref-in-t1-affine-nii-gz-ff57ca9025c2",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Warp Application",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_affine.nii.gz"
+    ]
+   },
+   "name": "Warp Application",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToT1w_warp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_boldToRegRef.nii.gz\",\"--postmat\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1w.mat\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToT1w_warp.nii.gz\"]",
+    "dependencies": [
+     "warpfield-boldtoregref-nii-gz-b0abe6e06375",
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "sub-1-ses-1-task-rest-bold-regref2t1w-mat-5cc71ab4d131"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-epitot1w-warp-nii-gz-373bbee7963c",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_boldToRegRef.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef2t1w.mat"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToT1w_warp.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_boldref.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"applywarp\",\"--rel\",\"--interp\",\"spline\",\"--in\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz\",\"--warp\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_boldref.nii.gz\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "sub-1-ses-1-task-rest-bold-regreftot1wbase-warp-nii-gz-67c058f4340d"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-boldref-nii-gz-2ffbebd03a04",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Warp Application",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_boldref.nii.gz"
+    ]
+   },
+   "name": "Warp Application",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/sub-1_ses-1_task-rest_bold_fieldmap_Hz_regRefSpace.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"flirt\",\"-in\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/fieldmap_Hz.nii.gz\",\"-ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"-applyxfm\",\"-init\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_postdcRefined_6dof.mat\",\"-out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/sub-1_ses-1_task-rest_bold_fieldmap_Hz_regRefSpace.nii.gz\",\"-interp\",\"trilinear\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "topup2regref-postdcrefined-6dof-mat-3efd2bdbc7ba"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-fieldmap-hz-regrefspace-nii-gz-cfdc4232f28d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/fieldmap_Hz.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/pose/topup2regRef_postdcRefined_6dof.mat"
+    ],
+    "kind": "command",
+    "name": "Linear Registration",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/sub-1_ses-1_task-rest_bold_fieldmap_Hz_regRefSpace.nii.gz"
+    ]
+   },
+   "name": "Linear Registration",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-T1w_desc-fieldmapHz_fieldmap.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"applywarp\",\"--rel\",\"--interp\",\"spline\",\"--in\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/sub-1_ses-1_task-rest_bold_fieldmap_Hz_regRefSpace.nii.gz\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz\",\"--warp\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-T1w_desc-fieldmapHz_fieldmap.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "sub-1-ses-1-task-rest-bold-regreftot1wbase-warp-nii-gz-67c058f4340d",
+     "sub-1-ses-1-task-rest-bold-fieldmap-hz-regrefspace-nii-gz-cfdc4232f28d"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-fieldmaphz-fieldmap-nii-gz-e97c47d9f955",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/sub-1_ses-1_task-rest_bold_fieldmap_Hz_regRefSpace.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Warp Application",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-T1w_desc-fieldmapHz_fieldmap.nii.gz"
+    ]
+   },
+   "name": "Warp Application",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preNonlinearReg_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_linear.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-regref-in-t1-linear-nii-gz-bfa1166844f4"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-prenonlinearreg-boldref-nii-gz-583bb621138f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_linear.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Finalize Registration QC",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preNonlinearReg_boldref.nii.gz"
+    ]
+   },
+   "name": "Finalize Registration QC",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-baseReg_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_affine.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-regref-in-t1-affine-nii-gz-ff57ca9025c2"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-basereg-boldref-nii-gz-e3a1c333618b",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRef_in_t1_affine.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Finalize Registration QC",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-baseReg_boldref.nii.gz"
+    ]
+   },
+   "name": "Finalize Registration QC",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-baseReg_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-refineReg_boldref.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-basereg-boldref-nii-gz-e3a1c333618b"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-refinereg-boldref-nii-gz-c4b588203a5a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-baseReg_boldref.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Finalize Registration QC",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-refineReg_boldref.nii.gz"
+    ]
+   },
+   "name": "Finalize Registration QC",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_itk_warp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"antsApplyTransforms\",\"-d\",\"3\",\"-r\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz\",\"-t\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\",\"-o\",\"[<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_itk_warp.nii.gz,1]\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-mni-2mm-nii-gz-24eeac95f89c"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-t1tomni-itk-warp-nii-gz-01280191075a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz"
+    ],
+    "kind": "command",
+    "name": "ANTs Transform Application",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_itk_warp.nii.gz"
+    ]
+   },
+   "name": "ANTs Transform Application",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_fnirt_warp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-convert-warpfield\",\"-from-itk\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_itk_warp.nii.gz\",\"-to-fnirt\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_fnirt_warp.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-t1tomni-itk-warp-nii-gz-01280191075a"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-t1tomni-fnirt-warp-nii-gz-f40fc9ccc1f9",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_itk_warp.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Wb Command",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_fnirt_warp.nii.gz"
+    ]
+   },
+   "name": "Wb Command",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToMNI_warp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToT1w_warp.nii.gz\",\"--warp2\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_fnirt_warp.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToMNI_warp.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-mni-2mm-nii-gz-24eeac95f89c",
+     "sub-1-ses-1-task-rest-bold-epitot1w-warp-nii-gz-373bbee7963c",
+     "sub-1-ses-1-task-rest-bold-t1tomni-fnirt-warp-nii-gz-f40fc9ccc1f9"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-epitomni-warp-nii-gz-79413cc09284",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToT1w_warp.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_fnirt_warp.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToMNI_warp.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_RegRefToMNI_warp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"convertwarp\",\"--relout\",\"--rel\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz\",\"--warp1\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz\",\"--warp2\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_fnirt_warp.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_RegRefToMNI_warp.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-mni-2mm-nii-gz-24eeac95f89c",
+     "sub-1-ses-1-task-rest-bold-regreftot1wbase-warp-nii-gz-67c058f4340d",
+     "sub-1-ses-1-task-rest-bold-t1tomni-fnirt-warp-nii-gz-f40fc9ccc1f9"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-regreftomni-warp-nii-gz-8a720f1e681d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_regRefToT1wBase_warp.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_T1ToMNI_fnirt_warp.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Warp Composition",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_RegRefToMNI_warp.nii.gz"
+    ]
+   },
+   "name": "Warp Composition",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_boldref.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"applywarp\",\"--rel\",\"--interp\",\"spline\",\"--in\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz\",\"--ref\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz\",\"--warp\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_RegRefToMNI_warp.nii.gz\",\"--out\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_boldref.nii.gz\"]",
+    "dependencies": [
+     "selected-reference-nii-gz-195aa2a7faff",
+     "sub-1-ses-1-task-rest-bold-mni-2mm-nii-gz-24eeac95f89c",
+     "sub-1-ses-1-task-rest-bold-regreftomni-warp-nii-gz-8a720f1e681d"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-mni152nlin2009casym-boldref-nii-gz-6a6b1b145c0d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selected_reference.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_RegRefToMNI_warp.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Warp Application",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_boldref.nii.gz"
+    ]
+   },
+   "name": "Warp Application",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc_pull.aff12.1D"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-desc-marss-bold-nii-gz-0222e0d5bd35",
+     "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae"
+    ],
+    "id": "sub-1-ses-1-task-rest-bold-mc-pull-aff12-1d-e9f10cd313eb",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc.nii.gz.mat.complete"
+    ],
+    "kind": "python",
+    "name": "Consolidate Motion Transforms for 4D Resampling",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc_pull.aff12.1D"
+    ]
+   },
+   "name": "Consolidate Motion Transforms for 4D Resampling",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToT1w_warp.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_t1w/warp_world.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae",
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "sub-1-ses-1-task-rest-bold-epitot1w-warp-nii-gz-373bbee7963c"
+    ],
+    "id": "warp-world-nii-gz-96b9f553808f",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToT1w_warp.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Convert Spatial Warp to World Coordinates (Unknown)",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_t1w/warp_world.nii.gz"
+    ]
+   },
+   "name": "Convert Spatial Warp to World Coordinates (Unknown)",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_t1w/warp_afni_lps.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_t1w/warp_world.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae",
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "warp-world-nii-gz-96b9f553808f"
+    ],
+    "id": "warp-afni-lps-nii-gz-4f749443fbfe",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_t1w/warp_world.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Convert Spatial Warp for AFNI (Unknown)",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_t1w/warp_afni_lps.nii.gz"
+    ]
+   },
+   "name": "Convert Spatial Warp for AFNI (Unknown)",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc_pull.aff12.1D",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_t1w/warp_afni_lps.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-desc-marss-bold-nii-gz-0222e0d5bd35",
+     "sub-1-ses-1-task-rest-bold-t1-grid-epi-vox-nii-gz-829b50b18291",
+     "sub-1-ses-1-task-rest-bold-mc-pull-aff12-1d-e9f10cd313eb",
+     "warp-afni-lps-nii-gz-4f749443fbfe"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-nii-5a5fb10eda30",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_t1_grid_epi_vox.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_t1w/warp_afni_lps.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc_pull.aff12.1D"
+    ],
+    "kind": "python",
+    "name": "Resample BOLD (T1w)",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii"
+    ],
+    "scientific_signature": "{\"repetition_time\":2.0}"
+   },
+   "name": "Resample BOLD (T1w)",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-T1w_desc-preproc_mean.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-nii-5a5fb10eda30"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-preproc-mean-nii-gz-69aabd3aafac",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii"
+    ],
+    "kind": "python",
+    "name": "Temporal Mean Image",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-T1w_desc-preproc_mean.nii.gz"
+    ]
+   },
+   "name": "Temporal Mean Image",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-T1w_desc-preproc_mean.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-preproc-mean-nii-gz-69aabd3aafac"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-brain-mask-nii-gz-a068a13438d3",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-T1w_desc-preproc_mean.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Mask Resampling",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz"
+    ]
+   },
+   "name": "Mask Resampling",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"bet\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-T1w_desc-preproc_mean.nii.gz\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_support_bet.nii.gz\",\"-R\",\"-f\",\"0.1\",\"-g\",\"0\",\"-m\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-preproc-mean-nii-gz-69aabd3aafac"
+    ],
+    "id": "epi-support-bet-nii-gz-a765f3fb1b0e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-T1w_desc-preproc_mean.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Brain Extraction",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_support_bet.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_support_bet_mask.nii.gz"
+    ]
+   },
+   "name": "Brain Extraction",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_support_bet_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/melodic_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-brain-mask-nii-gz-a068a13438d3",
+     "epi-support-bet-nii-gz-a765f3fb1b0e"
+    ],
+    "id": "melodic-mask-nii-gz-37e021a43dd5",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_support_bet_mask.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Construct MELODIC Estimation Mask",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/melodic_mask.nii.gz"
+    ]
+   },
+   "name": "Construct MELODIC Estimation Mask",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_support_bet_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/regression_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-brain-mask-nii-gz-a068a13438d3",
+     "epi-support-bet-nii-gz-a765f3fb1b0e"
+    ],
+    "id": "regression-mask-nii-gz-34710b06cd12",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_support_bet_mask.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Construct ICA Regression Mask",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/regression_mask.nii.gz"
+    ]
+   },
+   "name": "Construct ICA Regression Mask",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"fslmaths\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii\",\"-s\",\"2.5479654\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/melodic_input_smooth6mm.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-nii-5a5fb10eda30"
+    ],
+    "id": "melodic-input-smooth6mm-nii-gz-c781b7e91161",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii"
+    ],
+    "kind": "command",
+    "name": "Prepare Smoothed MELODIC Input",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/melodic_input_smooth6mm.nii.gz"
+    ]
+   },
+   "name": "Prepare Smoothed MELODIC Input",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_itk_warp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"antsApplyTransforms\",\"-d\",\"3\",\"-r\",\"<ROOT>/template.nii.gz\",\"-t\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\",\"-o\",\"[<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_itk_warp.nii.gz,1]\"]",
+    "dependencies": [],
+    "id": "t1-to-mni-itk-warp-nii-gz-3096352abb48",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/template.nii.gz"
+    ],
+    "kind": "command",
+    "name": "ANTs Transform Application",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_itk_warp.nii.gz"
+    ]
+   },
+   "name": "ANTs Transform Application",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_warp.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-convert-warpfield\",\"-from-itk\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_itk_warp.nii.gz\",\"-to-fnirt\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_warp.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\"]",
+    "dependencies": [
+     "t1-to-mni-itk-warp-nii-gz-3096352abb48"
+    ],
+    "id": "t1-to-mni-warp-nii-gz-32cd8b777fc2",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_itk_warp.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Wb Command",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_warp.nii.gz"
+    ]
+   },
+   "name": "Wb Command",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_in_t1_identity.mat"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "epi-in-t1-identity-mat-32015c864331",
+    "inputs": [],
+    "kind": "python",
+    "name": "Write Identity Transform",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_in_t1_identity.mat"
+    ]
+   },
+   "name": "Write Identity Transform",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_warp.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/classification_overview.txt",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/denoised_func_data_aggr.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.complete",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_FTmix",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_IC.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_mix",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_in_t1_identity.mat",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/melodic_input_smooth6mm.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/melodic_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/regression_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/motion.par",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae",
+     "sub-1-ses-1-task-rest-bold-mni-2mm-nii-gz-24eeac95f89c",
+     "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-nii-5a5fb10eda30",
+     "melodic-mask-nii-gz-37e021a43dd5",
+     "regression-mask-nii-gz-34710b06cd12",
+     "melodic-input-smooth6mm-nii-gz-c781b7e91161",
+     "t1-to-mni-warp-nii-gz-32cd8b777fc2",
+     "epi-in-t1-identity-mat-32015c864331"
+    ],
+    "id": "classification-overview-txt-3067b798b831",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/melodic_input_smooth6mm.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/motion.par",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/melodic_mask.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/regression_mask.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/epi_in_t1_identity.mat",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/anat/t1_to_mni_warp.nii.gz"
+    ],
+    "kind": "directory",
+    "name": "Run ICA-AROMA Classification and Denoising",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/classification_overview.txt",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/denoised_func_data_aggr.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_IC.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_mix",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_FTmix",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.complete",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/.nro_complete"
+    ]
+   },
+   "name": "Run ICA-AROMA Classification and Denoising",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/denoised_func_data_aggr.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_bold.nii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "classification-overview-txt-3067b798b831"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-aromaagg-bold-nii-10b85470c5d1",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/denoised_func_data_aggr.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Install ica_aroma Denoised BOLD",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_bold.nii"
+    ]
+   },
+   "name": "Install ica_aroma Denoised BOLD",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_bold.nii",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_mean.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-aromaagg-bold-nii-10b85470c5d1"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-aromaagg-mean-nii-gz-171ab090e312",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_bold.nii"
+    ],
+    "kind": "python",
+    "name": "Temporal Mean Image",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_mean.nii.gz"
+    ]
+   },
+   "name": "Temporal Mean Image",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/ica_aroma_policy.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-aromaagg-bold-nii-10b85470c5d1",
+     "sub-1-ses-1-task-rest-space-t1w-desc-aromaagg-mean-nii-gz-171ab090e312"
+    ],
+    "id": "ica-aroma-policy-json-581824fd002e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_bold.nii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_mean.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write ICA-AROMA Estimation Policy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/ica_aroma_policy.json"
+    ]
+   },
+   "name": "Write ICA-AROMA Estimation Policy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_bold.nii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-aromaagg-bold-nii-10b85470c5d1"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-nii-gz-9764aeb5c21e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_bold.nii"
+    ],
+    "kind": "python",
+    "name": "Finalize Derivative",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz"
+    ]
+   },
+   "name": "Finalize Derivative",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToMNI_warp.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_mni/warp_world.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae",
+     "sub-1-ses-1-task-rest-bold-mni-2mm-nii-gz-24eeac95f89c",
+     "sub-1-ses-1-task-rest-bold-epitomni-warp-nii-gz-79413cc09284"
+    ],
+    "id": "warp-world-nii-gz-80082a4e0578",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_EPIToMNI_warp.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Convert Spatial Warp to World Coordinates (Unknown)",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_mni/warp_world.nii.gz"
+    ]
+   },
+   "name": "Convert Spatial Warp to World Coordinates (Unknown)",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_mni/warp_afni_lps.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_mni/warp_world.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae",
+     "sub-1-ses-1-task-rest-bold-mni-2mm-nii-gz-24eeac95f89c",
+     "warp-world-nii-gz-80082a4e0578"
+    ],
+    "id": "warp-afni-lps-nii-gz-0796097e1e81",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_mni/warp_world.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Convert Spatial Warp for AFNI (Unknown)",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_mni/warp_afni_lps.nii.gz"
+    ]
+   },
+   "name": "Convert Spatial Warp for AFNI (Unknown)",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc_pull.aff12.1D",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_mni/warp_afni_lps.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-desc-marss-bold-nii-gz-0222e0d5bd35",
+     "sub-1-ses-1-task-rest-bold-mni-2mm-nii-gz-24eeac95f89c",
+     "sub-1-ses-1-task-rest-bold-mc-pull-aff12-1d-e9f10cd313eb",
+     "warp-afni-lps-nii-gz-0796097e1e81"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-preproc-bold-nii-4c4abf36b754",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_bold_mni_2mm.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/resampling_mni/warp_afni_lps.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_mc_pull.aff12.1D"
+    ],
+    "kind": "python",
+    "name": "Resample BOLD (MNI152NLin2009cAsym)",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii"
+    ],
+    "scientific_signature": "{\"repetition_time\":2.0}"
+   },
+   "name": "Resample BOLD (MNI152NLin2009cAsym)",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_mean.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-preproc-bold-nii-4c4abf36b754"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-preproc-mean-nii-gz-4c9513b10002",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii"
+    ],
+    "kind": "python",
+    "name": "Temporal Mean Image",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_mean.nii.gz"
+    ]
+   },
+   "name": "Temporal Mean Image",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_mean.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-preproc-mean-nii-gz-4c9513b10002"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-brain-mask-nii-gz-57ddab4bfd55",
+    "inputs": [
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_mean.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Mask Resampling",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-brain_mask.nii.gz"
+    ]
+   },
+   "name": "Mask Resampling",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"bet\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_mean.nii.gz\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/epi_support_bet.nii.gz\",\"-R\",\"-f\",\"0.1\",\"-g\",\"0\",\"-m\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-preproc-mean-nii-gz-4c9513b10002"
+    ],
+    "id": "epi-support-bet-nii-gz-242c416fb62a",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_mean.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Brain Extraction",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/epi_support_bet.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/epi_support_bet_mask.nii.gz"
+    ]
+   },
+   "name": "Brain Extraction",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/epi_support_bet_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/regression_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-brain_mask.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-brain-mask-nii-gz-57ddab4bfd55",
+     "epi-support-bet-nii-gz-242c416fb62a"
+    ],
+    "id": "regression-mask-nii-gz-b12eb10764ff",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/qc/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-brain_mask.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/epi_support_bet_mask.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Construct MNI152NLin2009cAsym ICA Regression Mask",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/regression_mask.nii.gz"
+    ]
+   },
+   "name": "Construct MNI152NLin2009cAsym ICA Regression Mask",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/aroma",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/regression_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/classified_motion_ICs.txt",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_mix",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "classification-overview-txt-3067b798b831",
+     "ica-aroma-policy-json-581824fd002e",
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-preproc-bold-nii-4c4abf36b754",
+     "regression-mask-nii-gz-b12eb10764ff"
+    ],
+    "id": "denoised-func-data-aggr-nii-gz-5c90d4566a5e",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reg/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/regression_mask.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_mix",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/classified_motion_ICs.txt",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/ica_aroma_policy.json"
+    ],
+    "kind": "python",
+    "name": "Regress Shared ICA-AROMA Components in MNI152NLin2009cAsym",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/aroma/denoised_func_data_aggr.nii.gz"
+    ]
+   },
+   "name": "Regress Shared ICA-AROMA Components in MNI152NLin2009cAsym",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/aroma/denoised_func_data_aggr.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_bold.nii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "denoised-func-data-aggr-nii-gz-5c90d4566a5e"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-aromaagg-bold-nii-4ef012a1a293",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/aroma/denoised_func_data_aggr.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Install MNI152NLin2009cAsym ica_aroma Denoised BOLD",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_bold.nii"
+    ]
+   },
+   "name": "Install MNI152NLin2009cAsym ica_aroma Denoised BOLD",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_bold.nii",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_mean.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-aromaagg-bold-nii-4ef012a1a293"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-aromaagg-mean-nii-gz-a024c9c75421",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_bold.nii"
+    ],
+    "kind": "python",
+    "name": "Temporal Mean Image",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_mean.nii.gz"
+    ]
+   },
+   "name": "Temporal Mean Image",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/ica_aroma_policy.json"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-aromaagg-bold-nii-4ef012a1a293",
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-aromaagg-mean-nii-gz-a024c9c75421"
+    ],
+    "id": "ica-aroma-policy-json-3dccd69f6785",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_bold.nii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_mean.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Write MNI152NLin2009cAsym ICA-AROMA Regression Policy",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/ica_aroma_policy.json"
+    ]
+   },
+   "name": "Write MNI152NLin2009cAsym ICA-AROMA Regression Policy",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_bold.nii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-aromaagg-bold-nii-4ef012a1a293"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-preproc-bold-nii-gz-bb1cfbadd377",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-MNI152NLin2009cAsym/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-aromaAgg_bold.nii"
+    ],
+    "kind": "python",
+    "name": "Finalize Derivative",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii.gz"
+    ]
+   },
+   "name": "Finalize Derivative",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/code/freesurfer",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-confounds_timeseries.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-confounds_timeseries.tsv",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_mean.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/motion.par"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae",
+     "sub-1-ses-1-task-rest-space-t1w-desc-brain-mask-nii-gz-a068a13438d3",
+     "sub-1-ses-1-task-rest-space-t1w-desc-aromaagg-mean-nii-gz-171ab090e312",
+     "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-nii-gz-9764aeb5c21e"
+    ],
+    "id": "sub-1-ses-1-task-rest-desc-confounds-timeseries-tsv-77d3a553009d",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/sub-1_ses-1_task-rest_space-T1w_desc-aromaAgg_mean.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/motion.par",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Confounds",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-confounds_timeseries.tsv",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-confounds_timeseries.json"
+    ],
+    "scientific_signature": "{\"global_gm_signal\":\"standardized_cerebral_cortex_mean\",\"mean_signals\":[\"white_matter\",\"csf\",\"global_signal\",\"global_gm_signal\"],\"repetition_time\":2.0}"
+   },
+   "name": "Confounds",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-fieldmapHz_fieldmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/sub-1_ses-1_task-rest_bold_fieldmap_Hz_regRefSpace.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-bold-fieldmap-hz-regrefspace-nii-gz-cfdc4232f28d"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-functionalreference-desc-fieldmaphz-fieldmap-nii-gz-9cf9d776abdf",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/sub-1_ses-1_task-rest_bold_fieldmap_Hz_regRefSpace.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Finalize Fieldmap Derivative",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-fieldmapHz_fieldmap.nii.gz"
+    ]
+   },
+   "name": "Finalize Fieldmap Derivative",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_desc-topupcoeff_fieldmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/topup_results_fieldcoef.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [],
+    "id": "sub-1-ses-1-task-rest-desc-topupcoeff-fieldmap-nii-gz-faefd32a6f44",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/topup_fieldmap_native/topup_results_fieldcoef.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Finalize Fieldmap Derivative",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_desc-topupcoeff_fieldmap.nii.gz"
+    ]
+   },
+   "name": "Finalize Fieldmap Derivative",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-sdcwarp_fieldmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_regRefSpace.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "warpfield-regrefspace-nii-gz-5e3d444c7631"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-functionalreference-desc-sdcwarp-fieldmap-nii-gz-bb4bcf53bf37",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_regRefSpace.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Finalize Fieldmap Derivative",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-sdcwarp_fieldmap.nii.gz"
+    ]
+   },
+   "name": "Finalize Fieldmap Derivative",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-boldSDCwarp_fieldmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_boldToRegRef.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "warpfield-boldtoregref-nii-gz-b0abe6e06375"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-functionalreference-desc-boldsdcwarp-fieldmap-nii-gz-de12fbb9f14b",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/sdc/WarpField_boldToRegRef.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Finalize BOLD-Readout SDC Warp",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-boldSDCwarp_fieldmap.nii.gz"
+    ]
+   },
+   "name": "Finalize BOLD-Readout SDC Warp",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-melodicIC_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_IC.nii.gz"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "dependencies": [
+     "classification-overview-txt-3067b798b831"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-melodicic-bold-nii-gz-b149c88d56d0",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w/aroma/melodic.ica/melodic_IC.nii.gz"
+    ],
+    "kind": "python",
+    "name": "Finalize ICA-AROMA Derivative",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-melodicIC_bold.nii.gz"
+    ]
+   },
+   "name": "Finalize ICA-AROMA Derivative",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-L_desc-preproc_bold.func.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-volume-to-surface-mapping\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-L_desc-preproc_bold.func.gii\",\"-ribbon-constrained\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-nii-gz-9764aeb5c21e"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-fsnative-hemi-l-desc-preproc-bold-func-gii-e714559953c9",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Wb Command",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-L_desc-preproc_bold.func.gii"
+    ]
+   },
+   "name": "Wb Command",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-L_desc-preproc_bold.func.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-metric-resample\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-L_desc-preproc_bold.func.gii\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-L_from-fsnative_to-fsaverage6_sphere.surf.gii\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/fsaverage6_hemi-L_sphere.surf.gii\",\"BARYCENTRIC\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-L_desc-preproc_bold.func.gii\"]",
+    "dependencies": [
+     "subject-hemi-l-from-fsnative-to-fsaverage6-sphere-surf-gii-263159f69d9f",
+     "fsaverage6-hemi-l-sphere-surf-gii-d26f18e54078",
+     "sub-1-ses-1-task-rest-space-fsnative-hemi-l-desc-preproc-bold-func-gii-e714559953c9"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-fsaverage6-hemi-l-desc-preproc-bold-func-gii-38f81a5b8ee3",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-L_desc-preproc_bold.func.gii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-L_from-fsnative_to-fsaverage6_sphere.surf.gii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/fsaverage6_hemi-L_sphere.surf.gii"
+    ],
+    "kind": "command",
+    "name": "Wb Command",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-L_desc-preproc_bold.func.gii"
+    ]
+   },
+   "name": "Wb Command",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-R_desc-preproc_bold.func.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-volume-to-surface-mapping\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-R_desc-preproc_bold.func.gii\",\"-ribbon-constrained\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\",\"<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz\"]",
+    "dependencies": [
+     "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-nii-gz-9764aeb5c21e"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-fsnative-hemi-r-desc-preproc-bold-func-gii-d9da25a6cd97",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz",
+     "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_T1w.nii.gz"
+    ],
+    "kind": "command",
+    "name": "Wb Command",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-R_desc-preproc_bold.func.gii"
+    ]
+   },
+   "name": "Wb Command",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-R_desc-preproc_bold.func.gii"
+   ],
+   "completion_boundary": false,
+   "contract": {
+    "command_signature": "[\"wb_command\",\"-metric-resample\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-R_desc-preproc_bold.func.gii\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-R_from-fsnative_to-fsaverage6_sphere.surf.gii\",\"<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/fsaverage6_hemi-R_sphere.surf.gii\",\"BARYCENTRIC\",\"<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-R_desc-preproc_bold.func.gii\"]",
+    "dependencies": [
+     "subject-hemi-r-from-fsnative-to-fsaverage6-sphere-surf-gii-936a1fa54156",
+     "fsaverage6-hemi-r-sphere-surf-gii-13dbfac1a2dc",
+     "sub-1-ses-1-task-rest-space-fsnative-hemi-r-desc-preproc-bold-func-gii-d9da25a6cd97"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-fsaverage6-hemi-r-desc-preproc-bold-func-gii-4df02713aea6",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-R_desc-preproc_bold.func.gii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/subject_hemi-R_from-fsnative_to-fsaverage6_sphere.surf.gii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/surf/fsaverage_spheres/fsaverage6_hemi-R_sphere.surf.gii"
+    ],
+    "kind": "command",
+    "name": "Wb Command",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-R_desc-preproc_bold.func.gii"
+    ]
+   },
+   "name": "Wb Command",
+   "resource_class": null
+  },
+  {
+   "closure_paths": [
+    "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-0.json",
+    "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-0.nii.gz",
+    "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-1.json",
+    "<ROOT>/BIDS/demo/sub-1/ses-1/fmap/fieldmap-1.nii.gz",
+    "<ROOT>/BIDS/demo/sub-1/ses-1/func/sub-1_ses-1_task-rest_bold.json",
+    "<ROOT>/BIDS/demo/sub-1/ses-1/func/sub-1_ses-1_task-rest_bold.nii.gz",
+    "<ROOT>/NRO_DEV/dev/BIDS/demo/derivatives/nro/anat/main/sub-1/anat/sub-1_desc-preprocessAnat_manifest.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_desc-topupcoeff_fieldmap.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_desc-topupcoeff_fieldmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-boldSDCwarp_fieldmap.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-boldSDCwarp_fieldmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-fieldmapHz_fieldmap.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-fieldmapHz_fieldmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-sdcwarp_fieldmap.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-sdcwarp_fieldmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-T1w_desc-fieldmapHz_fieldmap.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-T1w_desc-fieldmapHz_fieldmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-confounds_timeseries.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-confounds_timeseries.tsv",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssAfter_correlation.tsv",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifactMean_statmap.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifactMean_statmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_loadings.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_loadings.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_timeseries.tsv",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssBefore_correlation.tsv",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssCorrelation_qc.png",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssSliceScore_statmap.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssSliceScore_statmap.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marss_qc.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-preprocessFunc_manifest.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_boldref.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_boldref.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-baseReg_boldref.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-baseReg_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-melodicIC_bold.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-melodicIC_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preNonlinearReg_boldref.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preNonlinearReg_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-refineReg_boldref.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-refineReg_boldref.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-L_desc-preproc_bold.func.gii",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-L_desc-preproc_bold.func.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-R_desc-preproc_bold.func.gii",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-R_desc-preproc_bold.func.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-L_desc-preproc_bold.func.gii",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-L_desc-preproc_bold.func.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-R_desc-preproc_bold.func.gii",
+    "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-R_desc-preproc_bold.func.json",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/ica_aroma/space-T1w",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/marss/sub-1_ses-1_task-rest_desc-marss_bold.nii.gz",
+    "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selection.json"
+   ],
+   "completion_boundary": true,
+   "contract": {
+    "dependencies": [
+     "sub-1-ses-1-task-rest-desc-marss-bold-nii-gz-0222e0d5bd35",
+     "sub-1-ses-1-task-rest-bold-desc-robust-boldref-nii-gz-4ca4fa5783ae",
+     "selected-reference-nii-gz-195aa2a7faff",
+     "sub-1-ses-1-task-rest-space-t1w-boldref-nii-gz-2ffbebd03a04",
+     "sub-1-ses-1-task-rest-space-t1w-desc-fieldmaphz-fieldmap-nii-gz-e97c47d9f955",
+     "sub-1-ses-1-task-rest-space-t1w-desc-prenonlinearreg-boldref-nii-gz-583bb621138f",
+     "sub-1-ses-1-task-rest-space-t1w-desc-basereg-boldref-nii-gz-e3a1c333618b",
+     "sub-1-ses-1-task-rest-space-t1w-desc-refinereg-boldref-nii-gz-c4b588203a5a",
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-boldref-nii-gz-6a6b1b145c0d",
+     "sub-1-ses-1-task-rest-space-t1w-desc-brain-mask-nii-gz-a068a13438d3",
+     "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-nii-gz-9764aeb5c21e",
+     "sub-1-ses-1-task-rest-space-mni152nlin2009casym-desc-preproc-bold-nii-gz-bb1cfbadd377",
+     "sub-1-ses-1-task-rest-desc-confounds-timeseries-tsv-77d3a553009d",
+     "sub-1-ses-1-task-rest-space-functionalreference-desc-fieldmaphz-fieldmap-nii-gz-9cf9d776abdf",
+     "sub-1-ses-1-task-rest-desc-topupcoeff-fieldmap-nii-gz-faefd32a6f44",
+     "sub-1-ses-1-task-rest-space-functionalreference-desc-sdcwarp-fieldmap-nii-gz-bb4bcf53bf37",
+     "sub-1-ses-1-task-rest-space-functionalreference-desc-boldsdcwarp-fieldmap-nii-gz-de12fbb9f14b",
+     "sub-1-ses-1-task-rest-space-t1w-desc-melodicic-bold-nii-gz-b149c88d56d0",
+     "sub-1-ses-1-task-rest-space-fsnative-hemi-l-desc-preproc-bold-func-gii-e714559953c9",
+     "sub-1-ses-1-task-rest-space-fsaverage6-hemi-l-desc-preproc-bold-func-gii-38f81a5b8ee3",
+     "sub-1-ses-1-task-rest-space-fsnative-hemi-r-desc-preproc-bold-func-gii-d9da25a6cd97",
+     "sub-1-ses-1-task-rest-space-fsaverage6-hemi-r-desc-preproc-bold-func-gii-4df02713aea6"
+    ],
+    "id": "sub-1-ses-1-task-rest-space-t1w-desc-preproc-bold-json-6797bfc2e5c4",
+    "inputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-L_desc-preproc_bold.func.gii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-R_desc-preproc_bold.func.gii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-L_desc-preproc_bold.func.gii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-R_desc-preproc_bold.func.gii",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preNonlinearReg_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-baseReg_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-refineReg_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_boldref.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-melodicIC_bold.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_loadings.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifactMean_statmap.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssSliceScore_statmap.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-T1w_desc-fieldmapHz_fieldmap.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-fieldmapHz_fieldmap.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-sdcwarp_fieldmap.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_desc-topupcoeff_fieldmap.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-boldSDCwarp_fieldmap.nii.gz",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-confounds_timeseries.tsv",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-confounds_timeseries.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marss_qc.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_timeseries.tsv",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssBefore_correlation.tsv",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssAfter_correlation.tsv",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssCorrelation_qc.png",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/reference/sbref_qc/selection.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/WORK/demo/derivatives/nro/func/main/sub-1/ses-1/func/run/mc/sub-1_ses-1_task-rest_bold_desc-robust_boldref.json"
+    ],
+    "kind": "python",
+    "name": "Publish Functional Derivatives",
+    "outputs": [
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preproc_bold.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_desc-preproc_bold.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-L_desc-preproc_bold.func.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsnative_hemi-R_desc-preproc_bold.func.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-L_desc-preproc_bold.func.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-fsaverage6_hemi-R_desc-preproc_bold.func.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_boldref.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-preNonlinearReg_boldref.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-baseReg_boldref.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-refineReg_boldref.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-brain_mask.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-MNI152NLin2009cAsym_boldref.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_space-T1w_desc-melodicIC_bold.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifact_loadings.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssArtifactMean_statmap.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-marssSliceScore_statmap.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-T1w_desc-fieldmapHz_fieldmap.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-fieldmapHz_fieldmap.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-sdcwarp_fieldmap.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_desc-topupcoeff_fieldmap.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/fmap/sub-1_ses-1_task-rest_space-FunctionalReference_desc-boldSDCwarp_fieldmap.json",
+     "<ROOT>/NRO_DEV/feature%2Ftest/BIDS/demo/derivatives/nro/func/main/sub-1/ses-1/func/sub-1_ses-1_task-rest_desc-preprocessFunc_manifest.json"
+    ]
+   },
+   "name": "Publish Functional Derivatives",
+   "resource_class": null
+  }
+ ]
+}

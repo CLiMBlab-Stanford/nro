@@ -15,7 +15,7 @@ from nro.engine.bids import (
 )
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE, supported_output_spaces
 from nro.orchestration.runtime import load_runtime_workflow_snapshot, select_runtime_config
-from nro.site.paths import BIDS_PATH
+from nro.site.paths import bids_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
     clean_id, cfg = load_runtime_configuration(runtime_config, "clean")
     configure_clean(args.project, clean_id, cfg)
     source_subject = (
-        (execution_context.paths.bids if execution_context else Path(BIDS_PATH))
+        (execution_context.paths.bids if execution_context else Path(bids_path()))
         / args.project
         / sub_id
     )

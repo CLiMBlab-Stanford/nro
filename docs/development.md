@@ -203,7 +203,8 @@ private-state transactions. Locally, run the focused tests for the files and
 behavior you changed. `nro dev test` selects them for you, as described in
 [scoped validation](architecture-map.md#scoped-validation). It and its
 sphere-specific variants run the repository's formatting and lint checks before
-pytest, so style failures appear before you open a pull request.
+pytest, so style failures appear before you open a pull request. Unlike plain
+`pytest`, `nro dev test` runs both tiers.
 
 Pull-request checks run the complete suite before a release can merge:
 
@@ -249,8 +250,9 @@ may import nro after fixture setup, so `E402` is the only rule ignored under
 `tests/`. A new ignore needs a specific reason and should be narrower than a
 repository-wide rule.
 
-Plans under `plans/` are maintained design guidance for agents. Update a plan
-when the behavior it describes changes, and remove superseded instructions.
+Plans under `plans/` are maintained design guidance for agents. They are local
+to each checkout and are not tracked by Git. Update a plan when the behavior it
+describes changes, and remove superseded instructions.
 Migration reports belong under `plans/evidence/` and do not define current
 behavior.
 

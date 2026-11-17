@@ -58,11 +58,7 @@ class IngestionStore:
         control = ControlPaths(registry.paths.control)
         if branch_paths is not None and branch_paths.bids != registry.paths.bids_root.resolve():
             raise ValueError("Ingestion context differs from the shared raw BIDS root")
-        self.root = (
-            control.ingestion
-            if self.branch == "main"
-            else control.branch(self.branch) / "ingestion"
-        )
+        self.root = control.ingestion_for(self.branch)
 
     @contextmanager
     def _lock(self):

@@ -7,10 +7,10 @@ import nro.bin.log as log_cli
 from nro.bidsify.store import IngestionStore
 from nro.definitions.store import ConfigStore
 from nro.engine.cli import core_selection
-from nro.orchestration.branch_store import BranchStore
+from nro.orchestration import scheduler_client
+from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.planner import build_subject_work_items
 from nro.orchestration.registry import Registry, utcnow
-from nro.orchestration.scheduler_service import logs as scheduler_logs
 
 
 def _write(path: Path, text: str = "log\n") -> Path:
@@ -247,61 +247,53 @@ def test_bidsify_module_selector_opens_matching_ingestion_logs(tmp_path: Path, m
     assert log_cli.collect_bidsify_log_paths(registry, selection, running_only=True) == []
 
 
-def test_scheduler_resolves_branch_bidsification_logs(tmp_path: Path, monkeypatch) -> None:
-    registry = Registry.for_project("", bids_root=tmp_path / "bids")
-    branches = BranchStore(registry.paths.control)
-    checkout = tmp_path / "checkout"
-    checkout.mkdir()
+def test_cached_logs_resolve_ingestion_logs_for_each_branch(tmp_path: Path, monkeypatch) -> None:
+    control = tmp_path / "control"
+    rows = [
+        {
+            "id": "request-main",
+            "branch": "main",
+            "project": "demo",
+            "participant": "01",
+            "session": "visit1",
+            "state": "failed",
+        },
+        {
+            "id": "request-dev",
+            "branch": "dev",
+            "project": "demo",
+            "participant": "01",
+            "session": "visit1",
+            "state": "running",
+        },
+    ]
     monkeypatch.setattr(
-        "nro.orchestration.branches.checkout_identity",
-        lambda _checkout: (checkout, "main", "revision"),
+        scheduler_client,
+        "_cached_status",
+        lambda _control, _checkout: {"rows": [], "visible_ids": [], "ingestion": rows},
     )
-    branches.authorize_checkout("main", checkout, revision=branches.initialize().revision)
-    store = IngestionStore(registry)
-    store.root.mkdir(parents=True, exist_ok=True)
-    request_id = "request-01"
-    (store.root / f"{request_id}.json").write_text(
-        json.dumps(
-            {
-                "id": request_id,
-                "server": "cni",
-                "project": "demo",
-                "participant": "01",
-                "session": "visit1",
-                "state": "failed",
-                "stage": "convert",
-                "issues": [],
-            }
-        )
-    )
-    request_log = _write(store.root / f"{request_id}.log")
+    selection = {
+        "projects": [],
+        "ingestion_projects": [],
+        "participants": ["01"],
+        "modules": ["bidsify"],
+        "workflows": [],
+        "selectors": {"ses": ("visit1",)},
+    }
 
-    result = scheduler_logs(
-        registry,
-        checkout=checkout,
-        selection={
-            "projects": [],
-            "ingestion_projects": [],
-            "participants": ["01"],
-            "modules": ["bidsify"],
-            "workflows": [],
-            "selectors": {"ses": ("visit1",)},
-        },
-        worker_level=False,
-    )
+    def resolve(**options) -> list[str]:
+        return scheduler_client.logs(
+            control, tmp_path / "bids", checkout=tmp_path, worker_level=False, **options
+        )["paths"]
 
-    assert result == {"paths": [str(request_log)]}
-    assert scheduler_logs(
-        registry,
-        checkout=checkout,
-        selection={
-            "projects": [],
-            "ingestion_projects": [],
-            "participants": ["01"],
-            "modules": ["bidsify"],
-            "workflows": [],
-            "selectors": {"ses": ("visit1",)},
-        },
-        worker_level=False,
-        running_only=True,
-    ) == {"paths": []}
+    paths = ControlPaths(control)
+    assert resolve(selection=selection) == sorted(
+        [
+            str(paths.ingestion / "request-main.log"),
+            str(paths.branch("dev") / "ingestion" / "request-dev.log"),
+        ]
+    )
+    assert resolve(selection=selection, running_only=True) == [
+        str(paths.branch("dev") / "ingestion" / "request-dev.log")
+    ]
+    assert resolve(selection={**selection, "selectors": {"run": ("1",)}}) == []

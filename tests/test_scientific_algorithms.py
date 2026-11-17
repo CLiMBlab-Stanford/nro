@@ -29,6 +29,7 @@ from nro.modules.networks.consensus import membership_stability
 from nro.modules.networks.leiden import write_hint
 from nro.modules.networks.oslom import parse_tp, resolve_oslom_executable, run_oslom
 from nro.orchestration.runner import Runner
+from nro.site import configuration as site
 
 
 class ScientificAlgorithmTests(unittest.TestCase):
@@ -84,7 +85,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
         config = ConfigStore().load_configuration("func", "main").values
         self.assertEqual(
             Path(config["synbold_disco_image"]),
-            Path("/juice6/u/nlp/climblab/apptainer/images/synbold-disco_v1.4.sif"),
+            Path(site.settings()[0]["images"]) / "synbold-disco_v1.4.sif",
         )
 
     def test_synbold_image_resolution_requires_existing_image(self):

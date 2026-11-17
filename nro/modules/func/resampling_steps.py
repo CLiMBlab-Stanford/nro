@@ -62,7 +62,6 @@ def _create_temporal_mean_step(
     *,
     in_4d: Path,
     out_3d: Path,
-    env: dict[str, str],
     force: bool,
     chunk_vols: int,
 ) -> Step:
@@ -204,7 +203,6 @@ def _create_afni_bold_resampling_step(
     *,
     run_child: Callable[..., Optional[str]],
     in_4d: Path,
-    motion_ref_3d: Path,
     ref_3d: Path,
     afni_warp: Path,
     motion_affines: Path,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nro.engine.cli import page_text
+from nro.engine.cli import confirm, page_text
 from nro.orchestration.hotfixes import available
 from nro.site.configuration import settings
 
@@ -31,14 +31,6 @@ def _render(report: dict) -> str:
         lines.extend(("", "Files:"))
         lines.extend(f"  {path}" for path in report["paths"])
     return "\n".join(lines) + "\n"
-
-
-def _confirm() -> bool:
-    try:
-        response = input("Apply this hotfix? [y/N] ")
-    except (EOFError, KeyboardInterrupt):
-        return False
-    return response.strip().lower() in {"y", "yes"}
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro hotfix") -> None:
@@ -74,7 +66,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro hotfix") -> None:
         page_text(rendered)
     if args.dry_run or not preview["records"]:
         return
-    if not args.force and not _confirm():
+    if not args.force and not confirm("Apply this hotfix?"):
         print("Hotfix cancelled.")
         return
     result = maintenance(

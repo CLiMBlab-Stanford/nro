@@ -7,17 +7,7 @@ import sqlite3
 
 import yaml
 
-from nro.orchestration.sql_values import JSON_VALUES, json_values
-
-_QUERY_CHUNK_SIZE = 500
-
-
-def _chunks(values: tuple[int, ...]) -> tuple[tuple[int, ...], ...]:
-    """Split identifiers into bounded query batches."""
-    return tuple(
-        values[offset : offset + _QUERY_CHUNK_SIZE]
-        for offset in range(0, len(values), _QUERY_CHUNK_SIZE)
-    )
+from nro.orchestration.sql_values import JSON_VALUES, chunks, json_values
 
 
 def completion_records(
@@ -29,7 +19,7 @@ def completion_records(
         return {}
 
     rows: dict[int, dict] = {}
-    for chunk in _chunks(identifiers):
+    for chunk in chunks(identifiers):
         placeholders = JSON_VALUES
         chunk_values = (json_values(chunk),)
         for row in database.execute(
@@ -58,7 +48,7 @@ def completion_records(
     }
     upstream: dict[int, list[dict]] = {work_item_id: [] for work_item_id in rows}
     row_ids = tuple(rows)
-    for chunk in _chunks(row_ids):
+    for chunk in chunks(row_ids):
         placeholders = JSON_VALUES
         chunk_values = (json_values(chunk),)
         for artifact in database.execute(

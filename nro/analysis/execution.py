@@ -50,10 +50,15 @@ def specification(item: AnalysisWorkItem, *, code_root: Path, staging: Path) -> 
     }
 
 
-def _command(item: AnalysisWorkItem, spec_path: Path) -> list[str]:
+def runner_command(container: str | None, spec_path: Path) -> list[str]:
+    """Return the command that runs `nro.analysis.runner` on one specification.
+
+    Without a container the current interpreter runs it. With one, the site's
+    container runtime runs the image with the site binds and this checkout on
+    `PYTHONPATH`.
+    """
     runner = ["-m", "nro.analysis.runner", str(spec_path)]
-    image = item.analysis.container
-    if image is None:
+    if container is None:
         return [sys.executable, *runner]
     from nro.site.configuration import CHECKOUT, settings
 
@@ -61,11 +66,15 @@ def _command(item: AnalysisWorkItem, spec_path: Path) -> list[str]:
     command = [str(values["runtime"]), "exec", "--cleanenv"]
     for bind in values.get("binds") or ():
         command.extend(["--bind", str(bind)])
-    command.extend(["--env", f"PYTHONPATH={CHECKOUT}", image, "python", *runner])
+    command.extend(["--env", f"PYTHONPATH={CHECKOUT}", container, "python", *runner])
     return command
 
 
-def _publish(source: Path, destination: Path) -> None:
+def publish_output(source: Path, destination: Path) -> None:
+    """Copy one staged output with its metadata and replace `destination` atomically.
+
+    Empty files are allowed. Parent directories are created as needed.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     staged = destination.with_name(f".{destination.name}.publishing")
     shutil.copy2(source, staged)
@@ -101,7 +110,7 @@ def execute(
     log = work_dir / "log.txt"
     with log.open("w", encoding="utf-8") as stream:
         result = subprocess.run(
-            _command(item, spec_path),
+            runner_command(item.analysis.container, spec_path),
             cwd=work_dir,
             stdout=stream,
             stderr=subprocess.STDOUT,
@@ -127,7 +136,7 @@ def execute(
             "Published": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         for slot, path in item.outputs.items():
-            _publish(staging / path.name, path)
+            publish_output(staging / path.name, path)
             atomic_write_text(
                 provenance_path(path),
                 json.dumps({**provenance, "Slot": slot}, indent=2, sort_keys=True, default=str)

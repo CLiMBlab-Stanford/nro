@@ -12,15 +12,17 @@ import yaml
 from nro.definitions.markup import load_source_markup
 from nro.definitions.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs, matches_filter
-from nro.engine.cli import stderr
+from nro.engine.cli import module_target_parser, start_module_target, stderr
 from nro.engine.gray_matter import infer_gray_matter_mask
 from nro.engine.io import read_public_json, write_public_json
-from nro.engine.paths import anatomical_manifest_path, module_derivatives_root, module_work_root
+from nro.engine.paths import (
+    anatomical_manifest_path,
+    module_derivatives_root,
+    module_output_roots,
+)
 from nro.engine.references import resolve_public_payload
 from nro.engine.surface_geometry import dense_surface_geometry
 from nro.engine.targets import (
-    DEFAULT_SMOOTHING_MM,
-    DEFAULT_SPACE,
     is_surface_space,
     supported_output_spaces,
     target_output_names,
@@ -36,7 +38,7 @@ from nro.orchestration.runtime import (
     select_runtime_config,
     selected_configuration_fingerprint,
 )
-from nro.site.paths import BIDS_PATH, WORK_PATH
+from nro.site.paths import bids_path
 
 from .config import InputsConfig, ModuleConfig, OutputConfig, WorkbenchConfig
 from .contract import fcgradients_output_paths
@@ -115,21 +117,9 @@ def make_target_config(
             execution_context=execution_context,
         )
     sub_id = f"sub-{participant}"
-    output_base = module_derivatives_root(
-        "fcgradients",
-        fcgradients_id,
-        project=project,
-        bids_root=Path(BIDS_PATH if execution_context is None else execution_context.paths.bids),
+    output_base, work_base = module_output_roots(
+        "fcgradients", fcgradients_id, project=project, execution_context=execution_context
     )
-    work_base = module_work_root(
-        "fcgradients",
-        fcgradients_id,
-        project=project,
-        work_root=Path(WORK_PATH if execution_context is None else execution_context.paths.work),
-    )
-    if execution_context is not None:
-        output_base = execution_context.output_path(output_base)
-        work_base = execution_context.output_path(work_base, private=True)
     target, prefix = target_output_names(sub_id, space, smoothing_mm)
     return ModuleConfig(
         inputs=InputsConfig(
@@ -161,22 +151,7 @@ def make_target_config(
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the standalone module parser used by orchestration workers."""
-
-    parser = argparse.ArgumentParser(
-        description="Estimate a functional-connectivity gradient map for one target."
-    )
-    parser.add_argument("-p", "--participant", required=True)
-    parser.add_argument("-P", "--project", required=True)
-    parser.add_argument("-s", "--space", default=DEFAULT_SPACE)
-    parser.add_argument("-S", "--smoothing", type=int, default=DEFAULT_SMOOTHING_MM, metavar="MM")
-    parser.add_argument("-w", "--workflow", default="main")
-    parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
-    )
-    return parser
+    return module_target_parser("Estimate a functional-connectivity gradient map for one target.")
 
 
 def main(
@@ -187,14 +162,9 @@ def main(
     """Locate the dynconn target and execute one gradient work item."""
 
     args = build_parser().parse_args(argv)
-    if execution_context is not None and execution_context.project != args.project:
-        raise ValueError("Gradient project differs from its execution context")
-    if args.smoothing < 0:
-        raise SystemExit("--smoothing must be a nonnegative integer FWHM in mm")
-    participant = args.participant.removeprefix("sub-")
+    participant = start_module_target(args, execution_context)
     participant_id = f"sub-{participant}"
-    bids_root = Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
-    logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(message)s")
+    bids_root = Path(bids_path() if execution_context is None else execution_context.paths.bids)
     runtime_config = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
@@ -317,8 +287,7 @@ def main(
     )
     started = time.perf_counter()
     stderr(f"Running {cfg.backend} on {cfg.inputs.timeseries.name}\n")
-    with runner.run_context(started_at=started):
-        runner.execute()
+    runner.execute_graph(started_at=started)
     for name, path in result.items():
         print(f"{domain}/space-{args.space}/smoothing-{args.smoothing}mm/{name}: {path}")
 

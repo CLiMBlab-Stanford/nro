@@ -21,6 +21,7 @@ from typing import Callable, Optional, Sequence, TextIO
 
 from nro.engine.execution import collect_bind_directories, strip_ansi
 from nro.engine.io import atomic_write_json
+from nro.orchestration.attempt_files import AttemptFiles, record_step
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.resource_handoff import ResourceHandoff, ResourceHandoffExit
 from nro.orchestration.runner_graph import (
@@ -207,7 +208,7 @@ class Runner:
         contract_changes: dict[str, str] = {}
         completion_contract_matches = True
         if ledger:
-            contract_path = Path(ledger).with_name("runner-contract.json")
+            contract_path = AttemptFiles(Path(ledger).parent).runner_contract
             completion_contract_matches = graph.contract_signature_matches(
                 contract_path, signature=signature
             )
@@ -803,29 +804,7 @@ class Runner:
             "elapsed_seconds": elapsed,
             "error": error,
         }
-        try:
-            current = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-            if not isinstance(current, dict):
-                current = {}
-        except (OSError, json.JSONDecodeError):
-            current = {}
-        previous = current.get(key, {})
-        if status in {"success", "error"} and previous:
-            for field in ("outputs", "command", "cwd", "reason"):
-                if record.get(field) in (None, [], ""):
-                    record[field] = previous.get(field)
-        # A staleness check that skips an already-successful step should not
-        # erase the last actual execution record.
-        if not (status == "skipping" and current.get(key, {}).get("status") == "success"):
-            current[key] = record
-            atomic_write_json(path, current, sort_keys=True, mode=0o664)
-        events = path.with_name("step-events.jsonl")
-        with events.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(record, sort_keys=True) + "\n")
-        try:
-            events.chmod(0o664)
-        except PermissionError:
-            pass
+        record_step(path, record, merge_previous=True)
 
     @staticmethod
     def _status_from_reason(*, running: bool, reason: Optional[str]) -> str:
@@ -949,7 +928,6 @@ class Runner:
 
     def _log_command_start(
         self,
-        label: str,
         cmd: Sequence[str],
         *,
         cwd: Optional[Path] = None,
@@ -1162,6 +1140,16 @@ class Runner:
         else:
             self.log_python_success(step=step, step_name=step_name, started_at=started_at)
 
+    def execute_graph(self, *, started_at: Optional[float] = None) -> dict[str, NodeState]:
+        """Execute the frozen graph inside its own :meth:`run_context`.
+
+        started_at is a :func:`time.perf_counter` value; pass the time before
+        graph construction to include it in the reported duration. Return the
+        step states from :meth:`execute`.
+        """
+        with self.run_context(started_at=started_at):
+            return self.execute()
+
     @contextmanager
     def run_context(self, *, started_at: Optional[float] = None):
         """Own one complete runner invocation and report its terminal state."""
@@ -1247,7 +1235,7 @@ class Runner:
                     )
                 if ledger and state.graph is not None and not os.environ.get("NRO_TARGET_STEP_ID"):
                     state.graph.reconcile_contract(
-                        Path(ledger).with_name("runner-contract.json"),
+                        AttemptFiles(Path(ledger).parent).runner_contract,
                         signature=signature,
                     )
             except BaseException as error:
@@ -1281,7 +1269,7 @@ class Runner:
             ledger = os.environ.get("NRO_STEP_LEDGER")
             if ledger and state.graph is not None:
                 try:
-                    state.graph.write(Path(ledger).with_name("runner-graph.json"))
+                    state.graph.write(AttemptFiles(Path(ledger).parent).runner_graph)
                 except OSError as error:
                     # Never obscure the runner's real terminal state because
                     # an auxiliary observability artifact could not be written.
@@ -1386,7 +1374,7 @@ class Runner:
         human_name = str(step_name or self._guess_step_name(cmd)).strip()
         if self._container is None:
             cmd_str, started_at, step = self._log_command_start(
-                "Step", cmd, cwd=cwd, step_name=human_name, outputs=outputs, reason=reason
+                cmd, cwd=cwd, step_name=human_name, outputs=outputs, reason=reason
             )
             try:
                 if prepare is not None:
@@ -1421,7 +1409,6 @@ class Runner:
 
         full_cmd = self._container_prefix_for_cwd(cwd) + ["bash", "-lc", self._inner_cmd(cmd, env)]
         cmd_str, started_at, step = self._log_command_start(
-            "Step (container)",
             full_cmd,
             cwd=cwd,
             step_name=human_name,
@@ -1606,7 +1593,7 @@ class Runner:
     ) -> None:
         """Execute a host command without container translation and validate its outputs."""
         cmd_str, started_at, step = self._log_command_start(
-            "Step", args, cwd=cwd, step_name=step_name, outputs=outputs, reason=reason
+            args, cwd=cwd, step_name=step_name, outputs=outputs, reason=reason
         )
         try:
             if prepare is not None:

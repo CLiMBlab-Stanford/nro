@@ -71,7 +71,7 @@ def test_adapter_uses_checksum_verified_local_model(tmp_path, monkeypatch) -> No
         config: synthstroke.MASKER_CONFIG_SHA256,
         weights: synthstroke.MASKER_WEIGHTS_SHA256,
     }
-    monkeypatch.setattr(synthstroke, "_sha256", digests.__getitem__)
+    monkeypatch.setattr(synthstroke, "file_sha256", digests.__getitem__)
 
     assert synthstroke._model_files(config.parent, MASKER_MODEL, MASKER_REVISION) == (
         config,

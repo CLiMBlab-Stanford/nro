@@ -18,6 +18,7 @@ from nro.definitions.editor import (
 from nro.definitions.markup import compile_markup
 from nro.definitions.parsing import parse_mapping
 from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
+from nro.engine.cli import confirm
 
 
 @dataclass(frozen=True)
@@ -336,7 +337,7 @@ def _delete(store: ConfigStore, target: DefinitionTarget, expected: bytes, *, ye
     if not yes:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             raise ValueError("Deletion requires interactive confirmation or --yes")
-        if input("Delete this definition? [y/N] ").strip().lower() not in {"y", "yes"}:
+        if not confirm("Delete this definition?"):
             print("Cancelled; the stored definition is unchanged.")
             return
     backup = delete_definition(

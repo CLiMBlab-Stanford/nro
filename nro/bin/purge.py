@@ -12,6 +12,7 @@ import yaml
 
 from nro.engine.cli import (
     add_core_selection_arguments,
+    confirm,
     core_selection,
     matches_module_lineage,
     page_text,
@@ -33,7 +34,7 @@ from nro.orchestration.purge_paths import (
 from nro.orchestration.registry import Registry, utcnow
 from nro.orchestration.selection import selected_projects
 from nro.orchestration.sql_values import JSON_VALUES, json_values
-from nro.site.paths import WORK_PATH
+from nro.site.paths import work_path
 
 
 @dataclass(frozen=True)
@@ -367,19 +368,11 @@ def _render_plan(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _confirm() -> bool:
-    try:
-        response = input("Proceed with purge? [y/N] ")
-    except (EOFError, KeyboardInterrupt):
-        return False
-    return response.strip().lower() in {"y", "yes"}
-
-
 def build_parser(*, prog: str = "nro.bin.purge") -> argparse.ArgumentParser:
     """Construct the purge parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
-    parser.add_argument("--work-root", default=WORK_PATH)
+    parser.add_argument("--work-root", default=work_path())
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "-l",
@@ -454,7 +447,7 @@ def _purge_cache(args) -> None:
         elif not preview.paths:
             report.append("No unused cache entries to remove.")
         page_text("\n".join(report) + "\n")
-    if not args.dry_run and preview.paths and not args.force and not _confirm():
+    if not args.dry_run and preview.paths and not args.force and not confirm("Proceed with purge?"):
         print("Purge cancelled.")
         return
     result = preview if args.dry_run else collect(approved=preview.paths)
@@ -571,7 +564,7 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
                 excluded=args.excluded,
             )
         )
-    if not args.force and not args.dry_run and not _confirm():
+    if not args.force and not args.dry_run and not confirm("Proceed with purge?"):
         print("Purge cancelled.")
         return
     result = maintenance(
@@ -692,7 +685,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
             raise SystemExit("--json requires --force when purge is not a dry run")
     else:
         page_text(report)
-    if not args.force and not args.dry_run and not _confirm():
+    if not args.force and not args.dry_run and not confirm("Proceed with purge?"):
         print("Purge cancelled.")
         return
 

@@ -27,6 +27,7 @@ from nro.engine.container import (
     add_container_arguments,
     build_container,
 )
+from nro.engine.execution import create_configuration_snapshot_step
 from nro.engine.image_paths import sidecar_json_path
 from nro.engine.io import read_json, read_public_json, write_json, write_public_json
 from nro.engine.paths import (
@@ -421,23 +422,14 @@ def build_module(
 
     configuration_snapshot = work_dir / "configuration.json"
 
-    def validate_configuration() -> tuple[bool, str]:
-        try:
-            current = read_json(configuration_snapshot)
-        except (OSError, ValueError, TypeError):
-            return False, "Cleaning configuration snapshot is missing or unreadable."
-        if current != configuration:
-            return False, "Cleaning configuration changed."
-        return True, "Cleaning configuration is unchanged."
-
     runner.add_step(
-        Step.python(
+        create_configuration_snapshot_step(
+            configuration_snapshot,
+            configuration,
             name="Write Cleaning Configuration",
-            outputs=(configuration_snapshot,),
+            label="Cleaning configuration",
             inputs=(initialized,),
             force=bool(args.overwrite),
-            action=lambda: write_json(configuration_snapshot, configuration),
-            validate=validate_configuration,
         )
     )
 
@@ -1010,8 +1002,7 @@ def main(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     runner, verbose, output_count = build_module(argv, execution_context=execution_context)
-    with runner.run_context(started_at=runner_started):
-        runner.execute()
+    runner.execute_graph(started_at=runner_started)
     if verbose:
         print(f"Cleaned {output_count} functional outputs")
     return 0

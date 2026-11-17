@@ -412,7 +412,6 @@ def test_shared_regression_uses_t1w_mixing_matrix_without_melodic(
         _create_temporal_mean_step(
             in_4d=out_4d,
             out_3d=out_mean,
-            env={},
             force=False,
             chunk_vols=8,
         )

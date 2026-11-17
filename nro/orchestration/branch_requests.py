@@ -17,12 +17,8 @@ from nro.orchestration.compiled_request import encode_spec, export_workflow
 from nro.orchestration.execution_cache import cache_lock
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.execution_pins import capture_execution
-from nro.site.configuration import (
-    CHECKOUT,
-    installation_record,
-    protected_site_fingerprint,
-    settings,
-)
+from nro.site import configuration as site_config
+from nro.site.configuration import installation_record, protected_site_fingerprint, settings
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import WorkItemSpec
@@ -145,7 +141,7 @@ def register_requests(
                 central,
                 dict(
                     operation="admit_many",
-                    checkout=str(CHECKOUT),
+                    checkout=str(site_config.CHECKOUT),
                     entries=entries,
                 ),
                 require_service=start_scheduler,
@@ -178,9 +174,9 @@ def compile_request_entries(
     control = Path(values["registry"])
     branches = BranchStore(control)
     topology = branches.read().topology
-    name = topology.registered_checkout(CHECKOUT)
+    name = topology.registered_checkout(site_config.CHECKOUT)
     if name != "main":
-        name = topology.require_checkout(CHECKOUT)
+        name = topology.require_checkout(site_config.CHECKOUT)
     owner = topology.records[name].registry_id
     if scientific.record.registry_id != owner:
         raise ValueError("Scientific registry belongs to another checkout")
@@ -201,7 +197,9 @@ def compile_request_entries(
     if name == "main":
         from nro.orchestration.releases import ReleaseStore
 
-        release = ReleaseStore(branches).require_installed(CHECKOUT, installation_record())
+        release = ReleaseStore(branches).require_installed(
+            site_config.CHECKOUT, installation_record()
+        )
     site_fingerprint = protected_site_fingerprint()
     entries = []
     for request in _request_groups(plan.requests):

@@ -1,10 +1,10 @@
 """Remove eligible logs and individually authorized filesystem paths."""
 
 import shutil
-import subprocess
 from errno import EEXIST, ENOTEMPTY
 from pathlib import Path
 
+from nro.orchestration import slurm_jobs
 from nro.orchestration.registry import Registry
 from nro.orchestration.sql_values import JSON_VALUES, json_values
 
@@ -157,24 +157,8 @@ def _purge_inactive_worker_logs(registry: Registry, *, dry_run: bool) -> int:
         job_id = path.stem.removeprefix("slurm-")
         if job_id in active_job_ids:
             continue
-        if job_id not in terminal_job_ids and _slurm_job_may_be_active(job_id):
+        if job_id not in terminal_job_ids and slurm_jobs.job_terminal(job_id) is not True:
             continue
         worker_count += int(_remove_path(path, dry_run=dry_run, prune_root=registry.paths.workers))
 
     return worker_count
-
-
-def _slurm_job_may_be_active(job_id: str) -> bool:
-    """Protect an untracked worker log unless Slurm confirms it is absent."""
-    try:
-        result = subprocess.run(
-            ["squeue", "-h", "-j", job_id, "-o", "%T"],
-            text=True,
-            capture_output=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return True
-    if result.returncode != 0:
-        return True
-    return bool(result.stdout.strip())

@@ -28,9 +28,9 @@ def build_parser(*, prog: str = "nro wb_view") -> argparse.ArgumentParser:
 
 def viewer_path() -> Path:
     """Return the wb_view path beside the site's configured wb_command."""
-    from nro.site.paths import WB_COMMAND_PATH
+    from nro.site.paths import wb_command_path
 
-    return WB_COMMAND_PATH.expanduser().with_name("wb_view")
+    return wb_command_path().expanduser().with_name("wb_view")
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro wb_view") -> None:

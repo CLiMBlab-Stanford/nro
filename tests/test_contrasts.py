@@ -1232,18 +1232,18 @@ def test_public_adoption_checks_scientific_model_not_set(tmp_path):
         "expected_outputs_json": json.dumps([str(path)]),
         "artifact_contract_json": json.dumps({"processing": {"task_model": scientific}}),
     }
-    assert _public_derivative_completion(row, None)[0] is not None
+    assert _public_derivative_completion(row)[0] is not None
     source["model_set"] = ["development"]
     row["artifact_contract_json"] = json.dumps(
         {"processing": {"task_model": scientific_model(source)}}
     )
-    assert _public_derivative_completion(row, None)[0] is not None
+    assert _public_derivative_completion(row)[0] is not None
     source["contrasts"]["SvN"]["S"] = 1
     row["artifact_contract_json"] = json.dumps(
         {"processing": {"task_model": scientific_model(source)}}
     )
     with pytest.raises(_PublicDerivativeContractMismatch, match="contrasts model differs"):
-        _public_derivative_completion(row, None)
+        _public_derivative_completion(row)
 
 
 def test_invalid_unselected_development_model_does_not_block_main(task_store):

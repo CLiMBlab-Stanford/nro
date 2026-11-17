@@ -113,6 +113,12 @@ from the map selects the full suite. `--sphere NAME` runs only that sphere and
 its boundary tests, and may be repeated. `--dry-run` prints the selection
 without running it. Use `--full` before publication.
 
+The selection also includes every changed test module. Other test files that a
+sphere's paths match but that it does not list run only when they change or in
+the full suite. Selected runs and `--full` include the integration tier, so
+listed integration tests are not dropped by the default
+`-m "not integration"` option.
+
 Infrastructure spheres use synthetic contracts and small boundary cases instead
 of the scientific module suites, which keeps iteration fast. Focused validation
 does not replace the release requirements: the full suite and the upgrade

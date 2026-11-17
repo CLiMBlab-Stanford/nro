@@ -25,11 +25,11 @@ command uses the BIDS root from the global site configuration.
 | Page | Commands |
 | --- | --- |
 | [Request, inspect, and stop work](work.md) | `start`, `run`, `status`, `log`, `stop`, and the execution settings in `site` |
-| [Installation, cleanup, and publication](maintenance.md) | `./install`, `setup`, `site`, `doctor`, `purge`, `gc`, `freshen`, `project rename`, `migrate`, `publish` |
+| [Installation, cleanup, and publication](maintenance.md) | `./install`, `setup`, `site` and its aliases `paths`, `get`, and `set`, `doctor`, `purge`, `gc`, `freshen`, `project rename`, `migrate`, `hotfix`, `publish` |
 | [Viewing and quality control](viewing.md) | `scene`, `wb_view`, `viz`, `render`, `qc registration` |
 | [First-level model registration](models.md) | `models` |
 | [Manage definitions](authoring.md) | `def edit`, `def init`, and other `def` subcommands |
-| [Bidsify](bidsify.md) | `bidsify` |
+| [Bidsify](bidsify.md) | `bidsify`, `fw` |
 | [Configure scan plans](scanplans.md) | scan-plan parsers used by `bidsify` |
 | [Branch registration](branches.md) | `branch` |
 | [Installed releases](releases.md) | `release` and shared-scheduler repair |
@@ -37,6 +37,8 @@ command uses the BIDS root from the global site configuration.
 | [Methods reporting](../methods/reporting.md) | `methods` |
 | [Study analyses](studies.md) | `study` |
 | [Stimulus annotations](../stimulus-files.md) | `stimuli sync` |
+| This page | `help`, `find` |
+| [Development and documentation](../development.md) and [registry migrations](../registry-migrations.md) | `dev test`, `dev schema` |
 
 ```{toctree}
 :maxdepth: 1
@@ -174,6 +176,9 @@ affect only allocations that the command itself creates.
 | `slurm.viewer.time_hours` | `--viewer-time-hours N` | `viz`, `scene` |
 | `slurm.viewer.memory_gb` | `--viewer-memory-gb N` | `viz`, `scene` |
 | `slurm.viewer.cpus` | `--viewer-cpus N` | `viz`, `scene` |
+
+These are the names that `nro site` reads and sets. In `site/site.yml`,
+`slurm.viewer_partition` is stored as `slurm.viewing_partition`.
 
 `start`, `run`, and `bidsify` can each start the shared scheduler, so they
 share the scheduler options. These apply only when no scheduler is running or

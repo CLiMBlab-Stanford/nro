@@ -53,11 +53,6 @@ COMMAND_HELP = {
 CENTRAL_ONLY_COMMANDS = frozenset({"hotfix", "migrate", "project", "release"})
 
 
-def package_version() -> str:
-    """Read the selected application version, including layered shared installs."""
-    return application_version()
-
-
 def available_commands() -> tuple[str, ...]:
     """Return exactly the executable module names present in ``nro.bin``."""
     return tuple(
@@ -79,7 +74,7 @@ def build_parser(*, prog: str = "nro") -> argparse.ArgumentParser:
         "-v",
         "--version",
         action="version",
-        version=f"%(prog)s {package_version()}",
+        version=f"%(prog)s {application_version()}",
     )
     commands = parser.add_subparsers(dest="command", metavar="COMMAND")
     for command in available_commands():

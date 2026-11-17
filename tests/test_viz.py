@@ -372,7 +372,7 @@ def test_server_prefers_stable_port_and_moves_when_taken(tmp_path: Path, monkeyp
     monkeypatch.setattr(service, "preferred_port", lambda uid=None: taken)
     monkeypatch.setattr("nro.viz.catalog.branch_rows", lambda branch: [])
     try:
-        server = service.bind(tmp_path, "secret", port=None, cache_bytes=1, restart=None)
+        server = service.bind("secret", port=None, cache_bytes=1, restart=None)
         try:
             assert server.server_address[1] != taken
             assert taken < server.server_address[1] < taken + service.PORT_ATTEMPTS

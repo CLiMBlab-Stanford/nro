@@ -8,7 +8,7 @@ from pathlib import Path
 from nro.definitions.markup import SubjectMarkup, load_source_markup
 from nro.definitions.runtime import configure_anat, load_runtime_configuration
 from nro.orchestration.runtime import select_runtime_config
-from nro.site.paths import BIDS_PATH
+from nro.site.paths import bids_path
 
 
 def _bids_id(value: str, prefix: str) -> str:
@@ -22,7 +22,7 @@ def _anatomicals(
     bids_root: Path | None = None,
     markup: SubjectMarkup | None = None,
 ) -> tuple[list[Path], list[Path]]:
-    subject_dir = Path(BIDS_PATH if bids_root is None else bids_root) / project / sub_id
+    subject_dir = Path(bids_path() if bids_root is None else bids_root) / project / sub_id
     from nro.modules.anat.planning import raw_anatomical_images
 
     files = raw_anatomical_images(subject_dir, markup)
@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
     anat_id, cfg = load_runtime_configuration(runtime_config, "anat")
     configure_anat(args.project, anat_id, cfg)
     subject_dir = (
-        Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
+        Path(bids_path() if execution_context is None else execution_context.paths.bids)
         / args.project
         / sub_id
     )

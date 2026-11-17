@@ -224,7 +224,7 @@ def test_scheduler_exchange_reports_timeout(monkeypatch, tmp_path) -> None:
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
     active = {"token": "token", "port": 1}
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         scheduler_rpc, "request", lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError())
     )
@@ -274,7 +274,7 @@ def test_scheduler_exchange_describes_non_durable_timeout(monkeypatch, tmp_path)
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: {"token": "token", "port": 1})
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         scheduler_rpc, "request", lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError())
     )
@@ -308,7 +308,7 @@ def test_scheduler_exchange_does_not_time_out_while_slurm_controller_is_pending(
         lambda *_args: {"token": "launch", "job_id": "12345"},
     )
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: next(states, active))
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "nro.orchestration.scheduler_rpc.request",
         lambda *_args, **_kwargs: {"result": {"ok": True}},
@@ -330,7 +330,7 @@ def test_scheduler_exchange_times_out_if_local_controller_does_not_activate(
         lambda *_args: {"token": "launch", "job_id": "local-123"},
     )
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: None)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
 
     with pytest.raises(RuntimeError, match="did not respond within 0 seconds"):
         scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0)
@@ -341,7 +341,7 @@ def test_scheduler_exchange_reports_malformed_response(monkeypatch, tmp_path) ->
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: {"token": "x", "port": 1})
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(scheduler_rpc, "request", lambda *_args, **_kwargs: {"unexpected": True})
     with pytest.raises(RuntimeError, match="malformed response"):
         scheduler_client.exchange(endpoint, {"operation": "status"})
@@ -358,7 +358,7 @@ def test_scheduler_exchange_reports_startup_failure(monkeypatch, tmp_path) -> No
         lambda *_args: {"error": "database is locked"},
     )
     monkeypatch.setattr(scheduler_bus, "read_startup_progress", lambda *_args: None)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
     with pytest.raises(RuntimeError, match="could not start: database is locked"):
         scheduler_client.exchange(endpoint, {"operation": "status"})
 
@@ -369,7 +369,7 @@ def test_scheduler_exchange_preserves_keyboard_interrupt(monkeypatch, tmp_path) 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
     monkeypatch.setattr(
         scheduler_client,
-        "_ensure_coordinator",
+        "_service_available",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
 
@@ -384,7 +384,7 @@ def test_scheduler_exchange_does_not_mislabel_one_shot_operation_failure(
 
     scheduler_bus.prepare(tmp_path)
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         scheduler_client,
         "_run_once",
@@ -542,7 +542,7 @@ def test_direct_exchange_uses_live_endpoint_without_launch(monkeypatch, tmp_path
     monkeypatch.setattr(scheduler_bus, "create_message", lambda *_args, **_kwargs: record)
     monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: None)
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(scheduler_rpc, "request", lambda got, sent, **_kwargs: {"result": sent})
 
     assert scheduler_client.exchange(endpoint, {"operation": "status"}) == record
@@ -574,7 +574,7 @@ def test_direct_exchange_recovers_committed_response_after_connection_loss(
     monkeypatch.setattr(scheduler_bus, "create_message", lambda *_args, **_kwargs: record)
     monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: None)
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         scheduler_rpc,
         "request",
@@ -604,7 +604,7 @@ def test_durable_purge_uses_direct_retryable_request(monkeypatch, tmp_path) -> N
     monkeypatch.setattr(scheduler_bus, "create_message", lambda *_args, **_kwargs: record)
     monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: None)
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_client, "_service_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(scheduler_client.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         scheduler_rpc,
@@ -1275,7 +1275,7 @@ def test_run_repair_registers_existing_artifacts_without_demand(
     monkeypatch,
 ) -> None:
     bids = tmp_path / "bids"
-    monkeypatch.setattr("nro.engine.paths.BIDS_PATH", bids)
+    monkeypatch.setattr("nro.engine.paths.bids_path", lambda: bids)
     subject = bids / "demo" / "sub-01"
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
     registry = Registry.for_project("demo", bids_root=bids)
@@ -2241,7 +2241,7 @@ def test_wb_view_uses_viewer_beside_configured_wb_command(tmp_path: Path, monkey
     import nro.bin.wb_view as wb_view
     import nro.site.paths as site_paths
 
-    monkeypatch.setattr(site_paths, "WB_COMMAND_PATH", tmp_path / "bin" / "wb_command")
+    monkeypatch.setattr(site_paths, "wb_command_path", lambda: tmp_path / "bin" / "wb_command")
 
     assert wb_view.viewer_path() == tmp_path / "bin" / "wb_view"
 

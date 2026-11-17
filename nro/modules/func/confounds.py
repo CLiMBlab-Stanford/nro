@@ -211,30 +211,32 @@ def _acompcor_dense(
     if mask_idx.size < max(100, int(n_components) * 10):
         raise SystemExit(f"WM+CSF mask too small for aCompCor. Mask voxels: {mask_idx.size}.")
 
-    # Pull WM+CSF voxels: (Vmask, T) in float32.
-    t = int(epi_4d.shape[3])
-    flat = epi_4d.reshape(-1, t)  # view
-    X = np.asarray(flat[mask_idx, :], dtype=np.float32)
+    # Pull WM+CSF voxels as a (voxels, timepoints) float32 array.
+    n_timepoints = int(epi_4d.shape[3])
+    flat = epi_4d.reshape(-1, n_timepoints)  # view
+    voxel_series = np.asarray(flat[mask_idx, :], dtype=np.float32)
 
-    # Select a subset by variance over time (to keep PCA stable & fast).
+    # Keep only the highest-variance voxels so the SVD cost stays bounded.
     if int(mask_idx.size) > int(max_voxels):
-        var = X.var(axis=1, ddof=1, dtype=np.float64)
-        k = int(max_voxels)
-        top = np.argpartition(var, -k)[-k:]
-        top = top[np.argsort(var[top])[::-1]]
-        X = X[top, :]
+        variance = voxel_series.var(axis=1, ddof=1, dtype=np.float64)
+        n_retained = int(max_voxels)
+        top = np.argpartition(variance, -n_retained)[-n_retained:]
+        top = top[np.argsort(variance[top])[::-1]]
+        voxel_series = voxel_series[top, :]
 
     # Standardize per voxel (CompCor-style), then PCA across voxels => components over time.
-    X = X.astype(np.float32, copy=False)
-    X -= X.mean(axis=1, keepdims=True, dtype=np.float64).astype(np.float32)
-    std = X.std(axis=1, ddof=1, dtype=np.float64).astype(np.float32)
+    voxel_series = voxel_series.astype(np.float32, copy=False)
+    voxel_series -= voxel_series.mean(axis=1, keepdims=True, dtype=np.float64).astype(np.float32)
+    std = voxel_series.std(axis=1, ddof=1, dtype=np.float64).astype(np.float32)
     std[std == 0] = 1.0
-    X /= std[:, None]
+    voxel_series /= std[:, None]
 
-    mat = X.T  # (T, K)
-    n = min(int(n_components), int(mat.shape[0]), int(mat.shape[1]))
-    if n <= 0:
-        raise SystemExit(f"Invalid aCompCor n_components={n_components} for matrix {mat.shape}")
+    time_by_voxel = voxel_series.T
+    n_selected = min(int(n_components), int(time_by_voxel.shape[0]), int(time_by_voxel.shape[1]))
+    if n_selected <= 0:
+        raise SystemExit(
+            f"Invalid aCompCor n_components={n_components} for matrix {time_by_voxel.shape}"
+        )
     try:
         from sklearn.utils.extmath import randomized_svd
     except Exception as e:  # pragma: no cover
@@ -242,8 +244,10 @@ def _acompcor_dense(
             "Missing dependency: scikit-learn is required for fast aCompCor randomized SVD.\n"
             f"Import error: {e}"
         )
-    u, s, _vt = randomized_svd(mat, n_components=n, n_iter=4, random_state=0)
-    comps = u[:, :n] * s[:n]
+    u, singular_values, _vt = randomized_svd(
+        time_by_voxel, n_components=n_selected, n_iter=4, random_state=0
+    )
+    comps = u[:, :n_selected] * singular_values[:n_selected]
     return comps.astype(np.float64)
 
 
@@ -486,7 +490,7 @@ def get_confounds(
             )
         aseg_resampled = np.asanyarray(aseg_img.dataobj, dtype=np.int16)
     else:
-        # FreeSurfer aseg provides a robust brain mask in T1 space; resample it to the EPI grid
+        # FreeSurfer aseg provides a brain mask in T1 space; resample it to the EPI grid
         # (epi_in_t1 is not explicitly brain-masked in bold_to_t1.py).
         aseg = subjects_dir / fs_subject / "mri" / "aseg.mgz"
         if not aseg.exists():

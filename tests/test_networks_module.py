@@ -320,7 +320,7 @@ def test_dynconn_network_module_publishes_anatomically_indexed_maps(
 def test_network_config_uses_shared_subject_output_directory(tmp_path: Path, monkeypatch) -> None:
     subject = tmp_path / "project" / "derivatives" / "nro" / "microparcellation" / "main" / "sub-01"
     manifest = _manifest(subject, "fsnative", "surface")
-    monkeypatch.setattr(networks_main, "BIDS_PATH", str(tmp_path))
+    monkeypatch.setattr("nro.engine.paths.bids_path", lambda: tmp_path)
     config = ConfigStore().load_configuration("networks", "main").values
     config["connectivity_source"] = "microparcellation"
     target, cfg = networks_main.make_target_config(

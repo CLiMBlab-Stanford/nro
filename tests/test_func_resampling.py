@@ -201,7 +201,6 @@ def test_afni_resampling_restores_repetition_time(tmp_path: Path) -> None:
     step = _create_afni_bold_resampling_step(
         run_child=run_child,
         in_4d=source_path,
-        motion_ref_3d=reference_path,
         ref_3d=reference_path,
         afni_warp=tmp_path / "warp.nii.gz",
         motion_affines=tmp_path / "motion.aff12.1D",

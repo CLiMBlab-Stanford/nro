@@ -1,6 +1,7 @@
 """Command-line selection vocabulary and output primitives."""
 
 import argparse
+import logging
 import shutil
 import subprocess
 import sys
@@ -374,6 +375,52 @@ def page_text(
         subprocess.run(command, input=text, text=True, check=False)
     except KeyboardInterrupt:
         pass
+
+
+def module_target_parser(description: str) -> argparse.ArgumentParser:
+    """Build the entry-point parser shared by modules that process one space and smoothing.
+
+    The parser accepts the participant, project, space, smoothing, workflow,
+    `--overwrite`, and `--log-level`.
+    """
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("-p", "--participant", required=True, help="BIDS participant ID")
+    parser.add_argument("-P", "--project", required=True)
+    parser.add_argument("-s", "--space", default=DEFAULT_SPACE)
+    parser.add_argument("-S", "--smoothing", type=int, default=DEFAULT_SMOOTHING_MM, metavar="MM")
+    parser.add_argument("-w", "--workflow", default="main")
+    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR")
+    )
+    return parser
+
+
+def start_module_target(args: argparse.Namespace, execution_context=None) -> str:
+    """Check a parsed module target request, configure logging, and return the participant label.
+
+    Raises ValueError when `execution_context` belongs to another project and
+    SystemExit when the smoothing is negative. The returned label has no
+    `sub-` prefix.
+    """
+    if execution_context is not None and execution_context.project != args.project:
+        raise ValueError("Execution context project differs from the requested project")
+    if args.smoothing < 0:
+        raise SystemExit("--smoothing must be a nonnegative integer FWHM in mm")
+    logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(message)s")
+    return args.participant.removeprefix("sub-")
+
+
+def confirm(question: str) -> bool:
+    """Ask a yes/no question on the terminal; only "y" or "yes" confirms.
+
+    End of input or Ctrl-C counts as no. `question` is shown followed by `[y/N]`.
+    """
+    try:
+        response = input(f"{question} [y/N] ")
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return response.strip().lower() in {"y", "yes"}
 
 
 def stderr(message: str) -> None:

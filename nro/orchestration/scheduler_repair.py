@@ -9,6 +9,7 @@ from nro.orchestration import scheduler_implementation
 from nro.orchestration.branch_registry import SCHEMA_VERSION as BRANCH_SCHEMA_VERSION
 from nro.orchestration.branch_registry import BranchRegistry
 from nro.orchestration.branch_store import BranchStore
+from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import SCHEMA_VERSION, RegistryLock
 from nro.orchestration.releases import ReleaseStore
 from nro.orchestration.worker_control import stop_worker_pool_for_repair
@@ -100,7 +101,7 @@ def repair_scientific_schemas(registry) -> list[dict]:
 def _rebuild(registry) -> dict:
     """Replace quiescent scheduler state and recover records backed by public files."""
     branches = BranchStore(registry.paths.control)
-    transaction = registry.paths.control / "shared" / "maintenance" / uuid.uuid4().hex
+    transaction = ControlPaths(registry.paths.control).maintenance_transactions / uuid.uuid4().hex
     transaction.mkdir(parents=True, exist_ok=False)
     branch_backups: dict[Path, Path] = {}
     if branches.path.is_file():

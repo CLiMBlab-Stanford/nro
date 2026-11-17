@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from nro.engine.cli import confirm
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import RegistryPaths
 from nro.orchestration.releases import ReleaseStore
@@ -60,14 +61,14 @@ def main(argv=None, *, prog="nro release"):
             from nro.orchestration.registry import Registry
             from nro.orchestration.scheduler_repair import repair
 
-            def confirm(activity):
+            def confirm_repair(_activity):
                 print(
                     "This stops all branches’ workers and removes active request/attempt state. "
                     "Public derivatives and branch scientific databases are retained; a backup is kept."
                 )
-                return input("Repair the shared scheduler? [y/N] ").strip().lower() in {"y", "yes"}
+                return confirm("Repair the shared scheduler?")
 
-            result = repair(Registry(paths), checkout=args.checkout, confirm=confirm)
+            result = repair(Registry(paths), checkout=args.checkout, confirm=confirm_repair)
         elif args.activate:
             approved = store.require_approved(args.checkout)
             if args.version and approved["version"] != args.version:

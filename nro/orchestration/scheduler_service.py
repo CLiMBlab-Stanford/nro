@@ -31,7 +31,7 @@ from nro.orchestration.branch_reconciliation import candidates_locked, resolve_p
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.compiled_request import decode_spec
 from nro.orchestration.execution_context import ExecutionContext
-from nro.orchestration.registry import RegistryLockTimeout
+from nro.orchestration.registry import RegistryLockTimeout, require_request_owner
 from nro.orchestration.resources import (
     LONG_CPU_RESOURCE_CLASS,
     SCHEDULABLE_RESOURCE_CLASSES,
@@ -46,7 +46,6 @@ from nro.orchestration.scheduler_operations import (
     installation_activity,
     installation_prepare,
     installation_progress,
-    logs,
     pool_operation,
     require_environment_idle,
     status,
@@ -55,7 +54,7 @@ from nro.orchestration.scheduler_operations import (
     supply_needed,
 )
 from nro.orchestration.source_snapshots import SourceSnapshot
-from nro.orchestration.sql_values import JSON_VALUES, json_values
+from nro.orchestration.sql_values import JSON_VALUES, chunks, json_values
 from nro.site.configuration import protected_site_fingerprint
 
 _STOP = False
@@ -416,8 +415,7 @@ def admit_many(
             if candidate_cache:
                 current: dict[int, tuple[str, int]] = {}
                 ordered = tuple(sorted(reusable_ids))
-                for offset in range(0, len(ordered), 500):
-                    chunk = ordered[offset : offset + 500]
+                for chunk in chunks(ordered):
                     current.update(
                         {
                             int(row["id"]): (
@@ -651,10 +649,10 @@ def _commit_worker_event(registry, message: dict) -> None:
 
 def _apply_worker_checkin_batch(registry, messages: tuple[dict, ...]) -> list[dict]:
     """Commit coalescible worker lease traffic in one transaction."""
-    from nro.orchestration.registry import utcnow
+    from nro.orchestration.registry import WORKER_LEASE_SECONDS, renew_worker_lease, utcnow
 
     responses: list[dict] = []
-    lease_expires_at = time.time() + 120.0
+    lease_expires_at = time.time() + WORKER_LEASE_SECONDS
     updated_at = utcnow()
     with registry.connection(write=True) as db:
         for message in messages:
@@ -664,11 +662,12 @@ def _apply_worker_checkin_batch(registry, messages: tuple[dict, ...]) -> list[di
                 responses.append({"error": str(error), "error_type": type(error).__name__})
                 continue
             worker_id = str(message["worker_id"])
-            db.execute(
-                """UPDATE workers
-                   SET state=CASE WHEN state='shutdown_requested' THEN state ELSE ? END,
-                       lease_expires_at=?, updated_at=? WHERE id=?""",
-                (message["state"], lease_expires_at, updated_at, worker_id),
+            renew_worker_lease(
+                db,
+                worker_id,
+                state=message["state"],
+                lease_expires_at=lease_expires_at,
+                updated_at=updated_at,
             )
             result = None
             if message["action"] == "check_in":
@@ -1459,14 +1458,6 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         result = status(registry, checkout=Path(message["checkout"]), mode=message["mode"])
     elif message["operation"] == "stop":
         result = stop(registry, checkout=Path(message["checkout"]), selection=message["selection"])
-    elif message["operation"] == "logs":
-        result = logs(
-            registry,
-            checkout=Path(message["checkout"]),
-            selection=message["selection"],
-            worker_level=message["worker_level"],
-            running_only=bool(message.get("running_only", False)),
-        )
     elif message["operation"] in {
         "concurrency",
         "gpu_concurrency",
@@ -1636,12 +1627,12 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         topology = BranchStore(registry.paths.control).read().topology
         name = topology.registered_checkout(Path(message["checkout"]))
         with registry.connection() as db:
-            owner = db.execute(
-                "SELECT registry_id FROM request_owners WHERE request_id=?",
+            require_request_owner(
+                db,
                 (message["request"],),
-            ).fetchone()
-            if owner is None or owner[0] != topology.records[name].registry_id:
-                raise ValueError("Publication request belongs to another branch")
+                topology.records[name].registry_id,
+                purpose="Publication",
+            )
         destination = Path(message["destination"]).expanduser().resolve()
         if any(
             destination.is_relative_to(Path(values[key]).resolve())
@@ -1808,7 +1799,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
     return result
 
 
-def _message_response(registry, record: dict, *, values: dict) -> dict:
+def _message_response(record: dict, *, values: dict) -> dict:
     """Execute one validated scheduler request and encode its result."""
     from nro.orchestration.registry import Registry
     from nro.orchestration.scheduler_requests import RetryableSchedulerRequest
@@ -1941,7 +1932,7 @@ def _nondurable_response(registry, record: dict, *, values: dict, expires_at: fl
     payload = record["payload"]
     if payload.get("operation") == "worker" and payload.get("action") in {"heartbeat", "check_in"}:
         return _apply_worker_checkin_batch(registry, (payload,))[0]
-    return _message_response(registry, record, values=values)
+    return _message_response(record, values=values)
 
 
 def _dispatch_connection(
@@ -2288,7 +2279,7 @@ def serve(
     listener_stop = threading.Event()
     coordinator = RequestCoordinator(
         registry,
-        lambda record: _message_response(registry, record, values=values),
+        lambda record: _message_response(record, values=values),
     )
 
     def note_completion(record: dict, future) -> None:
@@ -2562,16 +2553,12 @@ def run_once(*, launch_token: str, bids_root: Path) -> int:
             )
         coordinator = RequestCoordinator(
             registry,
-            lambda item: _message_response(registry, item, values=values),
+            lambda item: _message_response(item, values=values),
         )
         for pending in prepare(registry):
             if pending["id"] != record["id"]:
                 coordinator.run(pending)
-        response = (
-            coordinator.run(record)
-            if durable
-            else _message_response(registry, record, values=values)
-        )
+        response = coordinator.run(record) if durable else _message_response(record, values=values)
         publish_status_snapshot(registry, generation=generation, active=False)
         print(json.dumps(response, separators=(",", ":"), sort_keys=True), flush=True)
         return 0

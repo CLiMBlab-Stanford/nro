@@ -63,7 +63,7 @@ def test_version_reports_verified_application_source(tmp_path, monkeypatch) -> N
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "2.3.4"\n')
     monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(tmp_path))
 
-    assert cli.package_version() == "2.3.4"
+    assert cli.application_version() == "2.3.4"
 
 
 def test_help_lists_task_guides_and_installed_commands(capsys) -> None:
