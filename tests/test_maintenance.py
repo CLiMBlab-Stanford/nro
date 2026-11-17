@@ -88,3 +88,16 @@ def test_failed_rebuild_restores_every_branch_database(tmp_path: Path, monkeypat
         _rebuild(registry)
 
     assert {name: path.read_bytes() for name, path in databases.items()} == before
+
+
+def test_audit_reports_its_phases(tmp_path: Path, capsys) -> None:
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    BranchStore(registry.paths.control).initialize()
+
+    audit_shared_state(registry, {})
+
+    output = capsys.readouterr().out
+    assert "Checking scheduler registry integrity..." in output
+    assert "Checking main branch registry integrity..." in output
+    assert "Auditing derivative ownership records..." in output

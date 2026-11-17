@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,11 +62,48 @@ def _inspect_database(path: Path, application_id: int) -> tuple[int | None, str 
         return None, f"Cannot inspect {path}: {error}"
 
 
-def audit_shared_state(registry, inventory: Mapping[str, tuple[str, ...]]) -> MaintenanceAudit:
-    """Inspect registries and public ownership without changing either."""
+AUDIT_PROGRESS_SECONDS = 10.0
+
+
+class _AuditProgress:
+    """Print audit progress as plain lines, at most once per interval."""
+
+    def __init__(self, interval: float = AUDIT_PROGRESS_SECONDS) -> None:
+        self.interval = interval
+        self.started = time.monotonic()
+        self.last = self.started
+
+    def phase(self, message: str) -> None:
+        print(message, flush=True)
+
+    def records(self, handled: int, total: int) -> None:
+        now = time.monotonic()
+        if handled == total or now - self.last >= self.interval:
+            self.last = now
+            print(
+                f"Auditing derivative ownership: {handled}/{total} work-item records "
+                f"({now - self.started:.0f} s)",
+                flush=True,
+            )
+
+
+def audit_shared_state(
+    registry,
+    inventory: Mapping[str, tuple[str, ...]],
+    *,
+    progress: _AuditProgress | None = None,
+) -> MaintenanceAudit:
+    """Inspect registries and public ownership without changing either.
+
+    The audit checks the integrity of every registry and reads every public
+    ownership record, which can take minutes on a shared filesystem, so it
+    reports progress as it goes.
+    """
     from nro.orchestration.branch_registry import APPLICATION_ID as BRANCH_APPLICATION_ID
     from nro.orchestration.registry_schema import APPLICATION_ID as SCHEDULER_APPLICATION_ID
 
+    progress = progress or _AuditProgress()
+    progress.phase("Checking scheduler registry integrity...")
     scheduler_schema, scheduler_error = _inspect_database(
         registry.paths.database, SCHEDULER_APPLICATION_ID
     )
@@ -79,13 +117,15 @@ def audit_shared_state(registry, inventory: Mapping[str, tuple[str, ...]]) -> Ma
             records = {}
             errors.append(f"Cannot read branch registration: {error}")
         for name in sorted(records):
+            progress.phase(f"Checking {name} branch registry integrity...")
             path = ControlPaths(registry.paths.control).branch(name) / "registry.sqlite3"
             schema, error = _inspect_database(path, BRANCH_APPLICATION_ID)
             branch_schemas[name] = schema
             if error:
                 errors.append(error)
+    progress.phase("Auditing derivative ownership records...")
     _lineages, _work_items, ownership_errors = read_ownership_records(
-        registry.paths.bids_root, inventory
+        registry.paths.bids_root, inventory, progress=progress.records
     )
     return MaintenanceAudit(
         scheduler_schema,

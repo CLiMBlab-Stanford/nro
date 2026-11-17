@@ -301,3 +301,69 @@ def test_ownership_scan_reads_site_settings_once(tmp_path: Path, monkeypatch) ->
     reads.clear()
     configuration.settings()
     assert len(reads) == 1, "the read cache must not outlive the scan"
+
+
+def _owned_participants(tmp_path: Path, participants: tuple[str, ...]) -> Path:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    for participant in participants:
+        _write(bids / "demo" / f"sub-{participant}" / "anat" / f"sub-{participant}_T1w.nii.gz")
+        work_item = build_subject_work_items(
+            project="demo",
+            participant=participant,
+            module="anat",
+            workflow=workflow,
+            registered=registered,
+            registry=registry,
+            bids_root=bids,
+        )[0]
+        write_work_item_ownership(
+            registry, registry.register_work_items((work_item,))[work_item.key]
+        )
+    return bids
+
+
+def test_ownership_scan_reports_progress_in_sorted_order(tmp_path: Path, monkeypatch) -> None:
+    import nro.orchestration.ownership as ownership
+
+    monkeypatch.setattr(ownership, "OWNERSHIP_READ_CHUNK", 2)
+    bids = _owned_participants(tmp_path, ("01", "02", "03", "04", "05"))
+    calls: list[tuple[int, int]] = []
+
+    _lineages, records, errors = read_ownership_records(
+        bids, ("demo",), progress=lambda handled, total: calls.append((handled, total))
+    )
+
+    assert errors == []
+    assert calls == [(index, 5) for index in range(1, 6)]
+    paths = [path for _record, path in records]
+    assert paths == sorted(paths)
+
+
+def test_unreadable_record_is_reported_without_stopping_the_scan(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import nro.orchestration.ownership as ownership
+
+    bids = _owned_participants(tmp_path, ("01", "02", "03"))
+    original = ownership._read_record_text
+    failed: list[Path] = []
+
+    def flaky(path: Path):
+        if not failed:
+            failed.append(path)
+            return PermissionError("denied")
+        return original(path)
+
+    monkeypatch.setattr(ownership, "_read_record_text", flaky)
+    calls: list[int] = []
+
+    _lineages, records, errors = read_ownership_records(
+        bids, ("demo",), progress=lambda handled, _total: calls.append(handled)
+    )
+
+    assert len(records) == 2
+    assert len(errors) == 1 and "denied" in errors[0]
+    assert calls == [1, 2, 3]
