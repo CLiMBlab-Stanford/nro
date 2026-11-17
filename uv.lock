@@ -2493,6 +2493,7 @@ oslom = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "pytest-xdist" },
     { name = "ruff" },
 ]
 
@@ -2534,6 +2535,7 @@ provides-extras = ["bidsify", "oslom", "marss", "lesion", "cicada"]
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8,<10" },
+    { name = "pytest-xdist", specifier = ">=3.6,<4" },
     { name = "ruff", specifier = ">=0.12,<1" },
 ]
 

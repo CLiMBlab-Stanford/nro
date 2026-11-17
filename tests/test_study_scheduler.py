@@ -279,7 +279,12 @@ def test_feature_branch_runs_study_analysis_after_its_upstream(tmp_path, monkeyp
             )
         )
     )
-    environment = {**os.environ, "NRO_SITE_CONFIG": str(site), "PYTHONPATH": str(feature)}
+    environment = {
+        **os.environ,
+        "NRO_SITE_CONFIG": str(site),
+        "PYTHONPATH": str(feature),
+        "NRO_CHECKOUT": str(feature),
+    }
     status = subprocess.run(
         [sys.executable, "-m", "nro.bin.status", "--json"],
         cwd=feature,

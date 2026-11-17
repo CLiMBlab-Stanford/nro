@@ -31,6 +31,31 @@ def _git(checkout: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
+def _rehearsal_environment(checkout: Path, site: Path) -> dict[str, str]:
+    """Return a subprocess environment that runs one rehearsal checkout's code.
+
+    The checkout is both the import root and `NRO_CHECKOUT`, so its own
+    installation records are used even when the interpreter carries a checkout
+    marker for another tree. Variables that bind a process to a captured source
+    or a scheduler role are removed.
+    """
+    environment = {
+        **os.environ,
+        "NRO_SITE_CONFIG": str(site),
+        "NRO_CHECKOUT": str(checkout),
+        "PYTHONPATH": str(checkout),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    for key in (
+        "NRO_EXECUTION_SOURCE_DIGEST",
+        "NRO_EXECUTION_SOURCE_ROOT",
+        "NRO_PROCESS_ROLE",
+        "NRO_SCHEDULER_MAINTENANCE",
+    ):
+        environment.pop(key, None)
+    return environment
+
+
 def _default_baseline(checkout: Path) -> str:
     """Select the newest release reachable from the candidate checkout."""
     tags = _git(checkout, "tag", "--merged", "HEAD", "--sort=-version:refname", "--list", "v*")
@@ -78,19 +103,7 @@ def _initialize_control(
         "state = branches.initialize()\n"
         "branches.authorize_checkout('main', checkout, revision=state.revision)\n"
     )
-    environment = {
-        **os.environ,
-        "NRO_SITE_CONFIG": str(site),
-        "PYTHONPATH": str(checkout),
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
-    for key in (
-        "NRO_EXECUTION_SOURCE_DIGEST",
-        "NRO_EXECUTION_SOURCE_ROOT",
-        "NRO_PROCESS_ROLE",
-        "NRO_SCHEDULER_MAINTENANCE",
-    ):
-        environment.pop(key, None)
+    environment = _rehearsal_environment(checkout, site)
     subprocess.run(
         [str(python), "-B", "-c", code, str(control), str(bids), str(checkout)],
         cwd=checkout,
@@ -115,19 +128,7 @@ def _initialize_definitions(
         "    from nro.definitions.repository import create_store\n"
         "create_store(Path(sys.argv[1]))\n"
     )
-    environment = {
-        **os.environ,
-        "NRO_SITE_CONFIG": str(site),
-        "PYTHONPATH": str(checkout),
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
-    for key in (
-        "NRO_EXECUTION_SOURCE_DIGEST",
-        "NRO_EXECUTION_SOURCE_ROOT",
-        "NRO_PROCESS_ROLE",
-        "NRO_SCHEDULER_MAINTENANCE",
-    ):
-        environment.pop(key, None)
+    environment = _rehearsal_environment(checkout, site)
     subprocess.run(
         [str(python), "-B", "-c", code, str(definitions)],
         cwd=checkout,
@@ -164,19 +165,7 @@ def _prepare_pool(
         "poll_interval=0.01, report_interval=60.0, update_schema=True)\n"
         "assert result['done']\n"
     )
-    environment = {
-        **os.environ,
-        "NRO_SITE_CONFIG": str(site),
-        "PYTHONPATH": str(checkout),
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
-    for key in (
-        "NRO_EXECUTION_SOURCE_DIGEST",
-        "NRO_EXECUTION_SOURCE_ROOT",
-        "NRO_PROCESS_ROLE",
-        "NRO_SCHEDULER_MAINTENANCE",
-    ):
-        environment.pop(key, None)
+    environment = _rehearsal_environment(checkout, site)
     subprocess.run(
         [
             str(python),

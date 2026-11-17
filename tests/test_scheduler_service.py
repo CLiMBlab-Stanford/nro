@@ -196,7 +196,12 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
     result = subprocess.run(
         command,
         cwd=feature,
-        env={**os.environ, "NRO_SITE_CONFIG": str(site), "PYTHONPATH": str(feature)},
+        env={
+            **os.environ,
+            "NRO_SITE_CONFIG": str(site),
+            "PYTHONPATH": str(feature),
+            "NRO_CHECKOUT": str(feature),
+        },
         check=True,
         text=True,
         capture_output=True,
@@ -208,7 +213,12 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
     result = subprocess.run(
         command,
         cwd=feature,
-        env={**os.environ, "NRO_SITE_CONFIG": str(site), "PYTHONPATH": str(feature)},
+        env={
+            **os.environ,
+            "NRO_SITE_CONFIG": str(site),
+            "PYTHONPATH": str(feature),
+            "NRO_CHECKOUT": str(feature),
+        },
         check=True,
         text=True,
         capture_output=True,
@@ -224,7 +234,12 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
     result = subprocess.run(
         command,
         cwd=feature,
-        env={**os.environ, "NRO_SITE_CONFIG": str(site), "PYTHONPATH": str(feature)},
+        env={
+            **os.environ,
+            "NRO_SITE_CONFIG": str(site),
+            "PYTHONPATH": str(feature),
+            "NRO_CHECKOUT": str(feature),
+        },
         check=False,
         text=True,
         capture_output=True,

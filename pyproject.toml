@@ -60,7 +60,7 @@ url = "https://download.pytorch.org/whl/cu118"
 explicit = true
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
+dev = ["pytest>=8,<10", "pytest-xdist>=3.6,<4", "ruff>=0.12,<1"]
 
 [project.scripts]
 nro = "nro.cli:main"
