@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import abc
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -82,35 +83,45 @@ def _portable_configuration_values(value: object, roots: ReferenceRoots) -> obje
 
 def _resolve_configuration_values(value: object) -> object:
     """Expand site-setting references for local execution and recovery."""
-    if isinstance(value, Mapping):
-        if set(value) == {_CONTAINER_RESOURCE}:
-            identity = value[_CONTAINER_RESOURCE]
-            if not isinstance(identity, Mapping) or set(identity) != {"name", "version"}:
-                raise ValueError("Invalid portable container identity")
-            name = str(identity["name"])
-            version = str(identity["version"])
-            from nro.site.configuration import CONTAINER_VERSIONS, settings
+    current: dict | None = None
 
-            if CONTAINER_VERSIONS.get(name) != version:
-                raise ValueError(f"Unsupported container identity {name!r} version {version!r}")
-            current = settings()[0]
-            if name not in current:
-                raise ValueError(f"Container resource {name!r} is not configured")
-            return str(current[name])
-        if set(value) == {_SITE_SETTING}:
-            name = value[_SITE_SETTING]
-            if name not in {"binds", "runtime"}:
-                raise ValueError(f"Unknown portable site setting {name!r}")
+    def site_values() -> dict:
+        nonlocal current
+        if current is None:
             from nro.site.configuration import settings
 
             current = settings()[0]
-            if name == "binds":
-                return list(current.get("binds", ()))
-            return str(current["runtime"])
-        return {key: _resolve_configuration_values(member) for key, member in value.items()}
-    if isinstance(value, list):
-        return [_resolve_configuration_values(member) for member in value]
-    return value
+        return current
+
+    def resolve(item: object) -> object:
+        # Records come from JSON, so abc checks match; typing aliases are slow.
+        if isinstance(item, abc.Mapping):
+            if len(item) == 1 and _CONTAINER_RESOURCE in item:
+                identity = item[_CONTAINER_RESOURCE]
+                if not isinstance(identity, abc.Mapping) or set(identity) != {"name", "version"}:
+                    raise ValueError("Invalid portable container identity")
+                name = str(identity["name"])
+                version = str(identity["version"])
+                from nro.site.configuration import CONTAINER_VERSIONS
+
+                if CONTAINER_VERSIONS.get(name) != version:
+                    raise ValueError(f"Unsupported container identity {name!r} version {version!r}")
+                if name not in site_values():
+                    raise ValueError(f"Container resource {name!r} is not configured")
+                return str(site_values()[name])
+            if len(item) == 1 and _SITE_SETTING in item:
+                name = item[_SITE_SETTING]
+                if name not in {"binds", "runtime"}:
+                    raise ValueError(f"Unknown portable site setting {name!r}")
+                if name == "binds":
+                    return list(site_values().get("binds", ()))
+                return str(site_values()["runtime"])
+            return {key: resolve(member) for key, member in item.items()}
+        if isinstance(item, list):
+            return [resolve(member) for member in item]
+        return item
+
+    return resolve(value)
 
 
 def _reference_roots(

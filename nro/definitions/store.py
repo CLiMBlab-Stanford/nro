@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import re
+from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
@@ -69,9 +70,11 @@ def _deep_merge(
 
 
 def _jsonable(value: Any) -> Any:
+    # collections.abc.Mapping is the same type as typing.Mapping, but checking
+    # against the typing alias is several times slower on deep values.
     if isinstance(value, Path):
         return str(value)
-    if isinstance(value, Mapping):
+    if isinstance(value, abc.Mapping):
         return {str(key): _jsonable(item) for key, item in sorted(value.items())}
     if isinstance(value, (list, tuple)):
         return [_jsonable(item) for item in value]
