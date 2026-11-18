@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Iterable, Mapping
 
 from nro.orchestration import dependency_state
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 PROTOCOL_VERSION = 6
 
@@ -194,39 +195,59 @@ class AssessmentReport:
 
 
 def _capture_locked(registry, db, *, work_item_ids=None, projects=None) -> AssessmentSnapshot:
+    """Read the selected work items, their upstream closure, and related records.
+
+    The closure is computed in SQL, so a narrow selection reads only its own
+    rows. Reading every wide work-item row held the registry lock for minutes
+    on a large registry while the scheduler assessed a few active items.
+    """
+    if work_item_ids is None and projects is None:
+        selected_ids = None
+    else:
+        conditions, parameters = [], []
+        if work_item_ids is not None:
+            conditions.append(f"id IN ({JSON_VALUES})")
+            parameters.append(json_values(sorted({int(value) for value in work_item_ids})))
+        if projects is not None:
+            conditions.append(f"project IN ({JSON_VALUES})")
+            parameters.append(json_values(sorted({str(value) for value in projects})))
+        selected_ids = [
+            int(row[0])
+            for row in db.execute(
+                f"""WITH RECURSIVE closure(id) AS (
+                        SELECT id FROM work_items WHERE {" AND ".join(conditions)}
+                        UNION SELECT edge.upstream_work_item_id
+                        FROM work_item_dependencies edge
+                        JOIN closure child ON child.id=edge.work_item_id
+                    ) SELECT id FROM closure ORDER BY id""",
+                parameters,
+            )
+        ]
+    item_filter = "" if selected_ids is None else f"WHERE i.id IN ({JSON_VALUES})"
+    edge_filter = "" if selected_ids is None else f"WHERE work_item_id IN ({JSON_VALUES})"
+    selection = () if selected_ids is None else (json_values(selected_ids),)
     work_items = [
         dict(row)
         for row in db.execute(
-            """SELECT i.*, e.branch AS execution_branch,
+            f"""SELECT i.*, e.branch AS execution_branch,
                       EXISTS(SELECT 1 FROM branch_work_items b
                              WHERE b.work_item_id=i.id) AS branch_owned
                FROM work_items i
                LEFT JOIN work_item_execution e ON e.work_item_id=i.id
-               ORDER BY i.id"""
+               {item_filter}
+               ORDER BY i.id""",
+            selection,
         )
     ]
     edges = [
         dict(row)
         for row in db.execute(
-            "SELECT * FROM work_item_dependencies ORDER BY work_item_id, upstream_work_item_id, role"
+            f"""SELECT * FROM work_item_dependencies {edge_filter}
+                ORDER BY work_item_id, upstream_work_item_id, role""",
+            selection,
         )
     ]
-    requested = None if work_item_ids is None else set(work_item_ids)
-    project_set = None if projects is None else set(projects)
-    selected = {
-        row["id"]
-        for row in work_items
-        if (requested is None or row["id"] in requested)
-        and (project_set is None or row["project"] in project_set)
-    }
-    parents = {}
-    for edge in edges:
-        parents.setdefault(edge["work_item_id"], set()).add(edge["upstream_work_item_id"])
-    pending = list(selected)
-    while pending:
-        for parent in parents.get(pending.pop(), set()) - selected:
-            selected.add(parent)
-            pending.append(parent)
+    selected = {row["id"] for row in work_items}
     # Resources and heartbeats can change while validation is in progress without
     # changing its conclusions. Generation, graph, recipe, and attempt changes cannot.
     work_items = [
@@ -236,7 +257,6 @@ def _capture_locked(registry, db, *, work_item_ids=None, projects=None) -> Asses
             if key not in {"memory_gb", "max_memory_gb", "updated_at"}
         }
         for row in work_items
-        if row["id"] in selected
     ]
     lineages = {row["module_lineage_id"] for row in work_items}
     configs = tuple(
@@ -266,7 +286,7 @@ def _capture_locked(registry, db, *, work_item_ids=None, projects=None) -> Asses
         registry.paths.bids_root,
         registry.paths.control,
         tuple(work_items),
-        tuple(edge for edge in edges if edge["work_item_id"] in selected),
+        tuple(edges),
         configs,
         completions,
         attempts,
