@@ -44,7 +44,7 @@ boundaries = ["tests/test_branch_functional_execution.py", "tests/test_scene.py"
 downstream = ["func", "clean", "dynconn", "microparcellation", "networks", "fcgradients", "contrasts"]
 
 [scope.func]
-paths = ["nro/modules/func/**", "tests/graph_golden.py", "tests/fixtures/graphs/func_*.json", "tests/test_func_*.py", "tests/test_branch_functional_execution.py", "tests/test_ica_aroma.py", "tests/test_cicada.py", "tests/test_synbold_disco.py"]
+paths = ["nro/modules/func/**", "tests/graph_golden.py", "tests/oblique_grids.py", "tests/fixtures/graphs/func_*.json", "tests/test_func_*.py", "tests/test_branch_functional_execution.py", "tests/test_ica_aroma.py", "tests/test_cicada.py", "tests/test_synbold_disco.py"]
 tests = ["tests/test_branch_functional_execution.py", "tests/test_func_resolver.py", "tests/test_func_resampling.py", "tests/test_cicada.py", "tests/test_ica_aroma.py"]
 boundaries = ["tests/test_clean_projection.py", "tests/test_contrasts.py"]
 downstream = ["clean", "dynconn", "microparcellation", "networks", "fcgradients", "contrasts"]

@@ -6,7 +6,9 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import pytest
+from oblique_grids import CLEARLY_OBLIQUE_BOLD_AFFINE, NEAR_DIAGONAL_BOLD_AFFINE
 
+from nro.engine.images import afni_orientation
 from nro.modules.func.resampling import (
     flirt_to_afni_pull,
     plumb_affine,
@@ -225,3 +227,54 @@ def test_gradient_warp_follows_spatial_and_motion_pull_transforms() -> None:
         )
         == "spatial.nii.gz motion.aff12.1D gradient.nii.gz"
     )
+
+
+def test_afni_orientation_follows_afni_for_a_near_diagonal_grid() -> None:
+    np.testing.assert_array_equal(
+        afni_orientation(NEAR_DIAGONAL_BOLD_AFFINE), [[0, -1], [1, 1], [2, 1]]
+    )
+    np.testing.assert_array_equal(
+        nib.orientations.io_orientation(NEAR_DIAGONAL_BOLD_AFFINE), [[0, -1], [2, 1], [1, -1]]
+    )
+    np.testing.assert_array_equal(
+        afni_orientation(CLEARLY_OBLIQUE_BOLD_AFFINE), [[0, -1], [2, 1], [1, -1]]
+    )
+
+
+def test_plumb_affine_uses_afni_axes_for_a_near_diagonal_grid() -> None:
+    image = nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.float32), NEAR_DIAGONAL_BOLD_AFFINE)
+    zooms = image.header.get_zooms()
+
+    plumb = plumb_affine(image)
+
+    np.testing.assert_allclose(np.abs(plumb[:3, :3]), np.diag(zooms), rtol=1e-6)
+    np.testing.assert_allclose(plumb[:3, 3], NEAR_DIAGONAL_BOLD_AFFINE[:3, 3])
+
+
+def test_afni_orientation_matches_nibabel_for_moderate_tilts() -> None:
+    generator = np.random.default_rng(7)
+    for _ in range(200):
+        angles = generator.uniform(-math.radians(30.0), math.radians(30.0), size=3)
+        rotation = np.eye(3)
+        for axis, angle in enumerate(angles):
+            others = [index for index in range(3) if index != axis]
+            step = np.eye(3)
+            step[np.ix_(others, others)] = [
+                [math.cos(angle), -math.sin(angle)],
+                [math.sin(angle), math.cos(angle)],
+            ]
+            rotation = rotation @ step
+        affine = np.eye(4)
+        affine[:3, :3] = rotation @ np.diag(generator.choice([-1.0, 1.0], size=3) * 2.0)
+        np.testing.assert_array_equal(
+            afni_orientation(affine), nib.orientations.io_orientation(affine)
+        )
+
+
+def test_plumb_affine_rejects_conflicting_qform_and_sform() -> None:
+    image = nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.float32), CLEARLY_OBLIQUE_BOLD_AFFINE)
+    image.set_qform(np.diag([-2.0, 2.0, 2.0, 1.0]), code=1)
+    image.set_sform(CLEARLY_OBLIQUE_BOLD_AFFINE, code=1)
+
+    with pytest.raises(ValueError, match="qform and sform"):
+        plumb_affine(image)

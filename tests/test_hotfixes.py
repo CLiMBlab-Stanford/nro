@@ -1110,3 +1110,90 @@ def test_msmall_brain_mask_hotfix_invalidates_only_msmall_nodes(tmp_path: Path) 
         execute=False,
     )
     assert repeated.records == 0
+
+
+def _bold(path: Path, affine) -> Path:
+    import nibabel as nib
+    import numpy as np
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    nib.save(nib.Nifti1Image(np.zeros((4, 4, 4, 2), dtype=np.float32), affine), path)
+    return path
+
+
+def test_afni_oblique_grid_hotfix_selects_misread_functional_grids(tmp_path: Path) -> None:
+    import numpy as np
+    from oblique_grids import CLEARLY_OBLIQUE_BOLD_AFFINE, NEAR_DIAGONAL_BOLD_AFFINE
+
+    from nro.orchestration.hotfixes import v0473_afni_oblique_grid as hotfix
+
+    near = _bold(tmp_path / "raw/sub-1_task-a_bold.nii.gz", NEAR_DIAGONAL_BOLD_AFFINE)
+    clear = _bold(tmp_path / "raw/sub-1_task-b_bold.nii.gz", CLEARLY_OBLIQUE_BOLD_AFFINE)
+    derivative = tmp_path / "derivatives/func"
+    _bold(derivative / "sub-1_task-c_space-T1w_boldref.nii.gz", NEAR_DIAGONAL_BOLD_AFFINE)
+    _bold(derivative / "sub-1_task-b_space-T1w_boldref.nii.gz", np.diag([2.0, 2.0, 2.0, 1.0]))
+    _bold(derivative / "sub-1_task-b_space-T1w_desc-x_boldref.nii.gz", NEAR_DIAGONAL_BOLD_AFFINE)
+    _bold(derivative / "sub-1_task-b_space-Other_boldref.nii.gz", NEAR_DIAGONAL_BOLD_AFFINE)
+
+    def row(work_item_id: int, module: str, source: Path, task: str) -> dict:
+        manifest = derivative / f"sub-1_task-{task}_desc-preprocessFunc_manifest.json"
+        return dict(
+            id=work_item_id,
+            module=module,
+            input_paths_json=json.dumps([str(source)]),
+            expected_outputs_json=json.dumps([str(manifest)]),
+        )
+
+    rows = [
+        row(1, "func", near, "a"),
+        row(2, "func", clear, "b"),
+        row(3, "func", clear, "c"),
+        row(4, "clean", near, "a"),
+        row(5, "func", tmp_path / "raw/missing_bold.nii.gz", "d"),
+    ]
+
+    assert hotfix.purge_roots(rows) == {1, 3}
+    assert HOTFIX_ID != hotfix.HOTFIX_ID and hotfix.HOTFIX_ID in available()
+
+
+def test_defect_closure_purges_consumers_outside_the_selectors() -> None:
+    from nro.bin.purge import _closure_selection
+
+    rows = [
+        dict(
+            id=work_item_id,
+            project="ev",
+            participant="1",
+            module=module,
+            directory_label="main-1",
+            entities_json="{}",
+        )
+        for work_item_id, module in ((1, "func"), (2, "clean"), (3, "func"), (4, "networks"))
+    ]
+    selection = SimpleNamespace(
+        projects=(),
+        participants=(),
+        modules=("func",),
+        workflows=(),
+        lineages=(),
+        work_item_entities={},
+    )
+
+    assert _closure_selection(rows, [[2, 1], [4, 2]], selection, {1}) == {1, 2, 4}
+
+
+def test_purge_hotfix_runs_through_branch_purge(monkeypatch) -> None:
+    from nro.bin import hotfix, purge
+
+    calls = []
+    monkeypatch.setattr(hotfix, "settings", lambda: ({"bids": "/missing"}, None))
+    monkeypatch.setattr(
+        purge, "_branch_purge", lambda args, selection, **kwargs: calls.append((args, kwargs))
+    )
+
+    hotfix.main(["v0473-afni-oblique-grid", "-P", "ev", "--dry-run"])
+
+    args, kwargs = calls[0]
+    assert args.project == ["ev"] and args.dry_run and not args.force
+    assert kwargs["defect_roots"].__name__ == "purge_roots"
+    assert "v0473-afni-oblique-grid" in kwargs["title"]

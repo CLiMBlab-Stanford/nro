@@ -33,6 +33,36 @@ def _render(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _purge_hotfix(args, implementation, *, values: dict) -> None:
+    """Purge the work a hotfix identifies, with its downstream consumers.
+
+    The purge previews and confirms like `nro purge`, refuses work with active
+    attempts, and withdraws demand for the purged work.
+    """
+    from nro.bin import purge
+    from nro.engine.cli import core_selection
+    from nro.site.configuration import CHECKOUT
+
+    argv = ["-P", *args.projects] if args.projects else []
+    if args.dry_run:
+        argv.append("--dry-run")
+    if args.force:
+        argv.append("--force")
+    purge_args = purge.build_parser().parse_args(argv)
+    try:
+        selection = core_selection(purge_args)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    purge._branch_purge(
+        purge_args,
+        selection,
+        values=values,
+        checkout=CHECKOUT,
+        defect_roots=implementation.purge_roots,
+        title=f"{implementation.SUMMARY}\n\nHotfix: {implementation.HOTFIX_ID}",
+    )
+
+
 def main(argv: list[str] | None = None, *, prog: str = "nro hotfix") -> None:
     """List available hotfixes or apply one through the central scheduler."""
     args = _parser(prog).parse_args(argv)
@@ -45,6 +75,10 @@ def main(argv: list[str] | None = None, *, prog: str = "nro hotfix") -> None:
             print(f"{identifier}\t{implementation.SUMMARY}")
         return
     values = settings()[0]
+    implementation = fixes.get(args.hotfix)
+    if implementation is not None and hasattr(implementation, "purge_roots"):
+        _purge_hotfix(args, implementation, values=values)
+        return
     bids = Path(values["bids"])
     projects = tuple(args.projects or sorted(path.name for path in bids.iterdir() if path.is_dir()))
     from nro.orchestration.scheduler_client import maintenance

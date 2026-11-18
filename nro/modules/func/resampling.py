@@ -7,6 +7,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
+from nro.engine.images import afni_orientation
 from nro.engine.io import atomic_output_path, atomic_write_text
 
 LPS_FROM_RAS = np.diag([-1.0, -1.0, 1.0, 1.0])
@@ -36,8 +37,23 @@ def flirt_to_world(
 
 
 def plumb_affine(image: nib.spatialimages.SpatialImage) -> np.ndarray:
-    """Return the cardinal affine AFNI uses internally for an oblique grid."""
-    orientation = nib.orientations.io_orientation(image.affine)
+    """Return the cardinal affine AFNI uses internally for an oblique grid.
+
+    Raises ValueError when the image's qform and sform are both set but imply
+    different cardinal grids, because AFNI's choice between them is then
+    ambiguous.
+    """
+    header = image.header
+    if (
+        isinstance(header, nib.Nifti1Header)
+        and int(header["qform_code"]) > 0
+        and int(header["sform_code"]) > 0
+        and not np.array_equal(
+            afni_orientation(header.get_qform()), afni_orientation(header.get_sform())
+        )
+    ):
+        raise ValueError("NIfTI qform and sform imply different AFNI cardinal grids")
+    orientation = afni_orientation(image.affine)
     zooms = tuple(float(value) for value in image.header.get_zooms()[:3])
     result = np.eye(4)
     result[:3, :3] = 0.0
