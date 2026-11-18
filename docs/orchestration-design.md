@@ -79,6 +79,13 @@ derivative stale. Replanning an unchanged contract updates the recipe for future
 attempts, while an attempt that has already been claimed keeps the recipe it
 captured when it started.
 
+The interpreter in a recorded command is not part of the recipe's meaning.
+Installation may replace a dependency environment while work is queued, so
+each claim runs an nro command with the current environment of the
+installation that owns the recorded interpreter. That installation is the
+nearest parent directory whose `.nro-installation.json` names it as the
+checkout.
+
 ## Requests with several runs or targets
 
 Some work items depend on a set of runs. `input_filter` belongs to the

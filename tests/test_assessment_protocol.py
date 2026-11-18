@@ -556,3 +556,22 @@ def test_completed_file_record_uses_metadata_without_content_hash(tmp_path):
     legacy = file_record(artifact)
     assert "sha256" in legacy
     assert inventories_match([record], [legacy])
+
+
+def test_narrow_capture_matches_the_filtered_full_capture(graph):
+    registry, _, ids = graph
+    full = capture_assessment(registry)
+    narrow = capture_assessment(registry, work_item_ids=[ids["leaf"]])
+    keep = {ids["root"], ids["leaf"]}
+
+    assert narrow.work_items == tuple(row for row in full.work_items if row["id"] in keep)
+    assert narrow.dependencies == tuple(
+        edge for edge in full.dependencies if edge["work_item_id"] in keep
+    )
+    assert narrow.configurations == full.configurations
+    assert (
+        capture_assessment(registry, work_item_ids=[ids["leaf"]], projects=["other"]).work_items
+        == ()
+    )
+    by_project = capture_assessment(registry, projects=["demo"])
+    assert {row["id"] for row in by_project.work_items} == set(ids.values())

@@ -36,6 +36,7 @@ from nro.engine.terminal import SpinnerLine
 from nro.orchestration import dependency_state, slurm_jobs
 from nro.orchestration.attempt_files import AttemptFiles
 from nro.orchestration.control_paths import ControlPaths
+from nro.orchestration.interpreters import with_current_interpreter
 from nro.orchestration.local_processes import process_state
 from nro.orchestration.migrations import migrate_database
 from nro.orchestration.recovery_lock import RecoveryLock
@@ -2086,6 +2087,11 @@ class Registry(WorkflowRegistry):
                 if command is None:
                     return None
                 work_item["command_json"] = json.dumps(command)
+            # The installation may have replaced the environment recorded at
+            # planning time; run with its current interpreter.
+            work_item["command_json"] = json.dumps(
+                with_current_interpreter(json.loads(work_item["command_json"]))
+            )
             ensure_shared_directory(log_dir)
             cursor = db.execute(
                 """
@@ -2133,10 +2139,11 @@ class Registry(WorkflowRegistry):
         """Recover the active assignment after an interrupted scheduler response."""
         with self.connection() as db:
             row = db.execute(
-                """SELECT i.*,a.id AS attempt_id,a.log_path,
+                """SELECT i.*,ci.config_fingerprint,a.id AS attempt_id,a.log_path,
                           task.id AS resource_task_id,task.step_id AS target_step_id,
                           COALESCE(e.command_json,i.command_json) AS command_json
                    FROM attempts a JOIN work_items i ON i.id=a.work_item_id
+                   JOIN module_lineages ci ON ci.id=i.module_lineage_id
                    LEFT JOIN attempt_execution e ON e.attempt_id=a.id
                    LEFT JOIN resource_step_tasks task ON task.attempt_id=a.id
                    WHERE a.worker_id=? AND a.state IN ('queued','running','cancel_requested')
@@ -2147,6 +2154,9 @@ class Registry(WorkflowRegistry):
             if work_item is not None:
                 work_item["completed_resource_steps_json"] = self._completed_resource_steps_json(
                     db, work_item
+                )
+                work_item["command_json"] = json.dumps(
+                    with_current_interpreter(json.loads(work_item["command_json"]))
                 )
         if row is None:
             return None
@@ -2316,6 +2326,11 @@ class Registry(WorkflowRegistry):
                     )
                     return None
                 work_item["command_json"] = json.dumps(command)
+            # The installation may have replaced the environment recorded at
+            # planning time; run with its current interpreter.
+            work_item["command_json"] = json.dumps(
+                with_current_interpreter(json.loads(work_item["command_json"]))
+            )
             ensure_shared_directory(log_dir)
             cursor = db.execute(
                 """INSERT INTO attempts(work_item_id,worker_id,state,revision_fingerprint,
