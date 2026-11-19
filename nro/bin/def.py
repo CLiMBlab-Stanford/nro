@@ -15,7 +15,11 @@ from nro.definitions.migrations import (
     migrate_store,
     update_store,
 )
-from nro.definitions.repository import create_store, validate_store
+from nro.definitions.repository import (
+    create_store,
+    store_validator,
+    validate_selected_store,
+)
 from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.engine.cli import confirm
 from nro.site import configuration as site
@@ -23,44 +27,12 @@ from nro.site import configuration as site
 TYPED_KINDS = frozenset({"model", "workflow", "markup", *CONFIGURATION_CLASSES})
 
 
-def _context(root: Path) -> tuple[bool, Path | None, tuple[Path, ...]]:
-    """Return site and inheritance arguments for validating one selected store."""
-    record = site.installation_record()
-    shared = Path(site.settings()[0]["definitions"]).resolve()
-    private = record.get("mode") == "branch" and root.resolve() != shared
-    active = site.definitions_roots()
-    inherited = (
-        active[1:]
-        if private and active and root.resolve() == active[0]
-        else ((shared,) if private else ())
-    )
-    inherited_site = shared if private and not (root / "site/site.yml").is_file() else None
-    return not private, inherited_site, tuple(inherited)
-
-
 def _validate(root: Path) -> dict[str, int]:
-    require_site, inherited_site, inherited_roots = _context(root)
-    return validate_store(
-        root,
-        require_site=require_site,
-        inherited_site=inherited_site,
-        inherited_roots=inherited_roots,
-    )
+    return validate_selected_store(root)
 
 
 def _validator(root: Path):
-    require_site, inherited_site, inherited_roots = _context(root)
-
-    def validate(candidate: Path) -> None:
-        validate_store(
-            candidate,
-            require_site=require_site,
-            inherited_site=inherited_site,
-            inherited_roots=inherited_roots,
-            published=root,
-        )
-
-    return validate
+    return store_validator(root)
 
 
 def _relative(value: str) -> Path:

@@ -36,7 +36,7 @@ command uses the BIDS root from the global site configuration.
 | [Accepting development artifacts](promotion.md) | `promote` |
 | [Methods reporting](../methods/reporting.md) | `methods` |
 | [Study analyses](studies.md) | `study` |
-| [Stimulus annotations](../stimulus-files.md) | `stimuli sync` |
+| [Stimulus annotations](../stimulus-files.md) | `stimuli publish`, `stimuli sync` |
 | This page | `help`, `find`, `tasks` |
 | [Development and documentation](../development.md) and [registry migrations](../registry-migrations.md) | `dev test`, `dev schema` |
 

@@ -304,6 +304,54 @@ def _publish(staged: Path, destination: Path) -> None:
     marker.unlink()
 
 
+def _validation_context(root: Path) -> tuple[bool, Path | None, tuple[Path, ...]]:
+    """Return site and inheritance arguments for validating one selected store."""
+    from nro.site import configuration as site
+
+    record = site.installation_record()
+    shared = Path(site.settings()[0]["definitions"]).resolve()
+    private = record.get("mode") == "branch" and root.resolve() != shared
+    active = site.definitions_roots()
+    inherited = (
+        active[1:]
+        if private and active and root.resolve() == active[0]
+        else ((shared,) if private else ())
+    )
+    inherited_site = shared if private and not (root / "site/site.yml").is_file() else None
+    return not private, inherited_site, tuple(inherited)
+
+
+def validate_selected_store(root: Path) -> dict[str, int]:
+    """Validate a store with the site and inheritance rules of the installation."""
+    require_site, inherited_site, inherited_roots = _validation_context(root)
+    return validate_store(
+        root,
+        require_site=require_site,
+        inherited_site=inherited_site,
+        inherited_roots=inherited_roots,
+    )
+
+
+def store_validator(root: Path):
+    """Return a check for a candidate copy of ``root``, as publication runs it.
+
+    The check applies the installation's site and inheritance rules and the
+    published-store rules, such as stimulus annotation versions.
+    """
+    require_site, inherited_site, inherited_roots = _validation_context(root)
+
+    def validate(candidate: Path) -> None:
+        validate_store(
+            candidate,
+            require_site=require_site,
+            inherited_site=inherited_site,
+            inherited_roots=inherited_roots,
+            published=root,
+        )
+
+    return validate
+
+
 def create_store(
     root: Path | None = None,
     *,

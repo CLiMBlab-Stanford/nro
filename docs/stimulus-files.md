@@ -40,7 +40,25 @@ Each annotation is an `_events.tsv` file with `onset` and `duration` columns,
 in seconds from the start of the stimulus, and a JSON sidecar. Every annotation
 file needs a `stimuli.tsv` row. `annotations.tsv` is optional. When it exists,
 it lists every annotation label in its `annot_id` column, usually with a
-`description`.
+`description` of what the label means for every stimulus.
+
+## Annotation levels
+
+nro defines the annotation levels that stimulus suites publish:
+
+| Level | Meaning |
+| --- | --- |
+| `words` | Words of the stimulus, one row per word at its onset in seconds from the start of the stimulus |
+| `phonemes` | Phonemes of the stimulus, one row per phoneme at its onset in seconds from the start of the stimulus |
+
+A level means the same for every stimulus, so the same model can read the
+`words` annotation of any story. What a particular annotation's columns hold,
+and where their values came from, belongs in that annotation's sidecar.
+`nro stimuli publish` writes a level's row to the catalog's `annotations.tsv`
+the first time the level is used. A lab can refine a published row's
+description with `nro def apply`; publication keeps it. A new level is added
+to nro, in `ANNOTATION_LEVELS` in `nro/definitions/stimuli.py`, rather than by a
+suite.
 
 Media files, `part-<label>` annotations, and other files in `stimuli/` are
 rejected. A stimulus ID may appear in only one store of the definitions chain,
@@ -58,14 +76,67 @@ Each annotation sidecar carries `NROVersion`, a positive integer:
 }
 ```
 
-A new annotation starts at version 1. When you publish a changed annotation
-TSV with `nro def apply`, raise its `NROVersion`. Publishing changed timing
+A new annotation starts at version 1. `nro stimuli publish` assigns versions
+itself (see [Publishing from a stimulus suite](#publishing-from-a-stimulus-suite)).
+When you publish a changed annotation TSV with `nro def apply`, raise its
+`NROVersion`. Publishing changed timing
 under the same version, or a higher version with unchanged timing, is an error.
 A sidecar-only change, such as a new description, keeps the version.
 
 The catalog keeps only the current version. Earlier versions stay in the
 definitions store's Git history. If an annotation was changed directly in the
 published store, nro compares it with its version at the store's Git `HEAD`.
+
+## Publishing from a stimulus suite
+
+Annotations for a stimulus suite, such as a story collection, are usually
+built by the suite's own code, which knows its sources and features. That code
+writes a staged directory in the catalog layout above, and
+`nro stimuli publish` adds it to the catalog:
+
+```bash
+nro stimuli publish STAGED --dry-run
+nro stimuli publish STAGED
+```
+
+The staged directory holds `stimuli.tsv` and
+`stim-<label>_annot-<level>_events.tsv` files with JSON sidecars:
+
+- `stimuli.tsv` needs a row, with the required columns, for every staged
+  stimulus.
+- Each annotation uses one of nro's [annotation levels](#annotation-levels).
+  The directory has no `annotations.tsv`, because nro describes the levels.
+- Each annotation TSV needs `onset` and `duration` columns, and each sidecar
+  must be a JSON object. A sidecar should describe every column, as a BIDS
+  events sidecar does, and record where the values came from.
+- Sidecars carry no `NROVersion` and no `NROStimulusSource`. Publication
+  assigns the version, and sync writes the source record.
+
+Publication compares each staged annotation TSV with the published one. A new
+annotation gets version 1, a changed TSV gets the published version plus 1, and
+an unchanged TSV keeps its version. A changed sidecar alone is published
+without a new version. Staged `stimuli.tsv` rows are added to the published
+table, which gains any new columns, with `n/a` in existing rows. A staged row
+that differs from a published row with the same `stimulus_id` is an error;
+change published rows with `nro def apply`.
+
+The batch is published in one transaction with the validation of
+`nro def apply`, so an invalid batch changes nothing. The report lists each
+annotation as `new`, `changed`, `metadata`, or `unchanged`, with its version.
+`--dry-run` reports without publishing. A published store with direct changes
+is refused until they are restored or adopted with `nro def apply`.
+
+Suite code can publish from Python with the same rules:
+
+```python
+from nro.definitions.stimulus_publish import describe, publish_stimuli
+
+plan = publish_stimuli("STAGED", dry_run=True)
+print("\n".join(describe(plan, dry_run=True)))
+```
+
+After publication, run `nro stimuli sync` in each project that uses the
+stimuli.
 
 ## Copying annotations into a project
 

@@ -42,7 +42,7 @@ COMMAND_HELP = {
     "site": "Inspect and update durable site-wide configuration.",
     "status": "Report derivative status.",
     "tasks": "Count source BIDS BOLD runs by task ID.",
-    "stimuli": "Copy stimulus annotations from the definitions catalog into projects.",
+    "stimuli": "Publish stimulus annotations to the catalog and copy them into projects.",
     "study": "Create, check, and run study analyses.",
     "stop": "Cancel derivative demand or stop workers.",
     "scene": "Create combined Workbench scenes from completed derivatives.",
