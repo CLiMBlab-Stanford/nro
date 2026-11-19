@@ -37,7 +37,7 @@ command uses the BIDS root from the global site configuration.
 | [Methods reporting](../methods/reporting.md) | `methods` |
 | [Study analyses](studies.md) | `study` |
 | [Stimulus annotations](../stimulus-files.md) | `stimuli sync` |
-| This page | `help`, `find` |
+| This page | `help`, `find`, `tasks` |
 | [Development and documentation](../development.md) and [registry migrations](../registry-migrations.md) | `dev test`, `dev schema` |
 
 ```{toctree}
@@ -211,3 +211,29 @@ such as `datatype` and `suffix`, and a pattern that matches nothing prints
 nothing. `--json` prints
 the selected paths as a JSON array. The command rejects derivative-only
 selectors: module, workflow, lineage, model, space, and smoothing.
+
+## Listing task IDs
+
+`nro tasks` counts source BOLD runs by task ID. It reads only the source BIDS
+projects, so it works without model or event-catalog definitions. It accepts
+the same selectors as `nro find`:
+
+```bash
+nro tasks
+nro tasks -P climb nptl --task 're:(?i)langloc.*'
+nro tasks -P tangrams --json tangrams_tasks.json
+```
+
+Each row gives the task ID, the number of BOLD runs, the number of those runs
+with an applicable `events.tsv`, the number of participants, and the runs in
+each project. A run counts as having events when BIDS inheritance selects
+exactly one events table for it; a run with ambiguous tables does not count.
+Task IDs are compared exactly, so `Rest` and `rest` appear as separate rows.
+Rows are sorted by task ID, ignoring case.
+
+The command counts only `func` images with the `bold` suffix, so `-r` rejects
+`datatype` and `suffix`. On a terminal the table opens in `less`; use
+`--no-pager` to print it directly. `--json` prints a JSON array with one object
+per task, and `--json PATH` writes that array to `PATH` instead. A selection
+with no BOLD runs exits nonzero for the table and produces an empty array for
+JSON.
