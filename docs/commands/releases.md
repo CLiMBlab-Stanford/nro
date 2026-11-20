@@ -37,6 +37,10 @@ checkout to a new release, run:
 ./install --maintain
 ```
 
+`nro install --upgrade --maintain` updates the checkout to the newest release
+and runs the same maintenance in one step (see
+[Upgrading an installation](../installation.md#upgrading-an-installation)).
+
 If work is active, the installer offers three choices: let current attempts
 finish, stop them immediately while keeping their demand, or cancel the
 maintenance. Activation writes

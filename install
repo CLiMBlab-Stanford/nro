@@ -14,6 +14,46 @@ done
 root=$(CDPATH= cd "$(dirname "$script")" && pwd -P)
 pins=$root/nro/site/bootstrap.pins
 
+# --upgrade first moves this checkout to the newest release, then runs that
+# release's ./install with the remaining options, because the installer itself
+# may differ between releases.
+upgrade=false
+for argument do
+    shift
+    if [ "$argument" = --upgrade ]; then upgrade=true; else set -- "$@" "$argument"; fi
+done
+if [ "$upgrade" = true ]; then
+    fail() { echo "Upgrade incomplete: $*" >&2; exit 1; }
+    command -v git >/dev/null 2>&1 || fail "--upgrade needs git"
+    top=$(git -C "$root" rev-parse --show-toplevel 2>/dev/null) ||
+        fail "$root is not a Git checkout"
+    [ "$(CDPATH= cd "$top" && pwd -P)" = "$root" ] || fail "$root is not a Git checkout"
+    if [ -n "$(git -C "$root" status --porcelain --untracked-files=no)" ]; then
+        fail "the checkout has uncommitted changes; commit or stash them first"
+    fi
+    branch=$(git -C "$root" symbolic-ref --quiet --short HEAD || true)
+    case $branch in
+        ""|main) ;;
+        *) fail "--upgrade follows releases on main, but the checkout is on $branch" ;;
+    esac
+    git -C "$root" fetch --quiet --tags origin || fail "could not fetch from origin"
+    git -C "$root" fetch --quiet origin main || fail "could not fetch origin main"
+    latest=$(git -C "$root" tag --list 'v[0-9]*.[0-9]*.[0-9]*' --merged origin/main \
+        --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n 1p)
+    [ -n "$latest" ] || fail "origin/main has no release tags"
+    if git -C "$root" merge-base --is-ancestor "$latest^{commit}" HEAD; then
+        echo "The checkout already includes $latest"
+    elif [ -n "$branch" ]; then
+        git -C "$root" merge --quiet --ff-only "$latest" ||
+            fail "main cannot fast-forward to $latest"
+        echo "Updated main to $latest"
+    else
+        git -C "$root" checkout --quiet --detach "$latest" || fail "could not check out $latest"
+        echo "Checked out $latest"
+    fi
+    exec "$root/install" "$@"
+fi
+
 rehearse=false
 offline=false
 maintain=false

@@ -26,6 +26,7 @@ COMMAND_HELP = {
     "models": "Inspect, validate, register, and compile first-level models.",
     "migrate": "Preview or apply explicit metadata representation migrations.",
     "setup": "Set up dependencies or connect to a shared installation.",
+    "install": "Rerun this installation's ./install, with --upgrade to move to the newest release.",
     "paths": "Manage site settings (compatibility alias for `nro site`).",
     "doctor": "Check dependencies and site access.",
     "help": "Show task guides or the current reference for an installed command.",

@@ -152,7 +152,12 @@ For projects that already exist, or to apply a newer catalog version, use
 nro stimuli sync PROJECT --dry-run
 nro stimuli sync PROJECT
 nro stimuli sync PROJECT --replace
+nro stimuli sync climb moth ev
 ```
+
+`sync` takes any number of projects and reports each in turn. A failure in
+one project, such as active attempts, does not stop the others; the command
+then exits nonzero and names each failure.
 
 `sync` finds every `stim_id` value in the project's run events files and
 copies all annotations of those stimuli into `PROJECT/stimuli/`, including

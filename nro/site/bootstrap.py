@@ -517,6 +517,12 @@ def _main(argv=None) -> None:
         help="Validate and adopt all direct definition-store changes before setup",
     )
     parser.add_argument(
+        "--upgrade",
+        action="store_true",
+        help="first move the checkout to the newest release on main, then install it; "
+        "handled by ./install before this parser runs",
+    )
+    parser.add_argument(
         "--rehearse-upgrade",
         nargs="?",
         const="",

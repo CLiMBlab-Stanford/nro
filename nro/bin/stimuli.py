@@ -27,7 +27,12 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
         "sync",
         help="Copy the annotations of every stimulus that the project's events name",
     )
-    sync.add_argument("project", help="BIDS project under the configured BIDS root")
+    sync.add_argument(
+        "projects",
+        nargs="+",
+        metavar="PROJECT",
+        help="BIDS projects under the configured BIDS root",
+    )
     sync.add_argument(
         "--replace",
         action="store_true",
@@ -44,31 +49,48 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     from nro.definitions.stimuli import StimulusCatalog
     from nro.definitions.stimulus_sync import describe, plan_sync
 
-    project_root = site.bids_root() / args.project
-    if "/" in args.project or not project_root.is_dir() or not any(project_root.glob("sub-*")):
-        parser.error(f"Unknown BIDS project: {args.project}")
+    roots = {}
+    for project in args.projects:
+        root = site.bids_root() / project
+        if "/" in project or not root.is_dir() or not any(root.glob("sub-*")):
+            parser.error(f"Unknown BIDS project: {project}")
+        roots[project] = root
     if not args.dry_run and site.installation_record().get("mode") == "branch":
         parser.error(
             "A development installation cannot change shared source BIDS; use --dry-run, "
             "or run sync from the central installation"
         )
     try:
-        plan = plan_sync(project_root, StimulusCatalog())
-        copied = (
-            []
-            if args.dry_run or not (plan.writes or (args.replace and plan.stale))
-            else _apply_guarded(plan, args.project, replace=args.replace)
-        )
+        catalog = StimulusCatalog()
     except (OSError, ValueError) as error:
         raise SystemExit(str(error)) from None
-    for line in describe(plan, copied, replace=args.replace):
-        print(line)
-    if not plan.references:
-        print(f"No events in {args.project} name a stimulus in stim_id.")
-    if plan.unknown or plan.blocked:
+    incomplete, failed = [], []
+    for project, root in roots.items():
+        if len(roots) > 1:
+            print(f"== {project}")
+        try:
+            plan = plan_sync(root, catalog)
+            copied = (
+                []
+                if args.dry_run or not (plan.writes or (args.replace and plan.stale))
+                else _apply_guarded(plan, project, replace=args.replace)
+            )
+        except (OSError, ValueError, SystemExit) as error:
+            # One project's failure does not stop the others.
+            failed.append(f"{project}: {error}")
+            continue
+        for line in describe(plan, copied, replace=args.replace):
+            print(line)
+        if not plan.references:
+            print(f"No events in {project} name a stimulus in stim_id.")
+        if plan.unknown or plan.blocked:
+            incomplete.append(project)
+    if failed:
+        raise SystemExit("Sync failed:\n" + "\n".join(failed))
+    if incomplete:
         raise SystemExit(
-            "Some stimuli could not be synchronized. Add unknown stimuli to the catalog with "
-            "`nro def apply`, and resolve blocked files by hand."
+            f"Some stimuli in {', '.join(incomplete)} could not be synchronized. Add unknown "
+            "stimuli to the catalog with `nro def apply`, and resolve blocked files by hand."
         )
 
 
