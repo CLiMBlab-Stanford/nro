@@ -368,6 +368,26 @@ Setup reports a missing license as optional, and it never requests credentials
 or registers on your behalf. FreeSurfer-dependent work fails before execution
 until the configured license file exists.
 
+## Upgrading an installation
+
+After the first `./install`, the `nro install` command reruns the installing
+checkout's `./install` with any options, so you do not need to change to the
+checkout. `--upgrade` first moves the checkout to the newest release:
+
+```bash
+nro install --upgrade              # a personal installation
+nro install --upgrade --maintain   # the shared installation
+```
+
+`./install --upgrade` does the same from the checkout. It fetches release tags
+from `origin`, then fast-forwards `main` to the newest release tag on
+`origin/main`, or checks out that tag when the checkout is a detached release.
+It then runs the new release's own `./install` with the other options, because
+the installer may differ between releases. It refuses a checkout with
+uncommitted changes to tracked files, and one on another branch: development
+checkouts follow their branch instead. If the checkout already includes the
+newest release, it reinstalls the current one.
+
 ## Unattended and offline setup
 
 For unattended setup, prepare the site file first:
