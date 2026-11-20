@@ -94,13 +94,23 @@ def test_repeated_presentations_reuse_one_annotation(tmp_path):
     assert list(sources) == ["stim-story1"]
 
 
+def test_expansion_truncates_annotations_at_the_presentation_end(tmp_path):
+    _stimuli(tmp_path)
+    events = pd.DataFrame({"onset": [10.0], "duration": [1.6], "stim_id": ["stim-story1"]})
+    expanded, _ = expand_presentations(events, annotation="words", dataset_root=tmp_path)
+    assert expanded["onset"].tolist() == [10.0, 11.5]
+    assert expanded["duration"].tolist() == pytest.approx([0.4, 0.1])
+    untimed = events.assign(duration=0.0)
+    expanded, _ = expand_presentations(untimed, annotation="words", dataset_root=tmp_path)
+    assert expanded["onset"].tolist() == [10.0, 11.5, 13.0]
+
+
 @pytest.mark.parametrize(
     "events,message",
     [
         ({"onset": [0.0], "duration": [1.0]}, "no stim_id column"),
         ({"onset": [0.0], "duration": [1.0], "stim_id": [None]}, "no stim_id values"),
         ({"onset": [0.0], "duration": [1.0], "stim_id": ["story1"]}, "stim-<label>"),
-        ({"onset": [0.0], "duration": [2.0], "stim_id": ["stim-story1"]}, "end after"),
         (
             {"onset": [0.0], "duration": [9.0], "stim_id": ["stim-story1"], "word_class": ["x"]},
             "occur in both",

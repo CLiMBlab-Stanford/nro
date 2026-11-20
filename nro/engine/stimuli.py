@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 ANNOTATION_LABEL = re.compile(r"[A-Za-z0-9]+")
 STIMULUS_ID = re.compile(r"stim-[A-Za-z0-9]+")
-# Allowed overrun of an annotation past its presentation, in seconds, for
+# Allowed overrun of an annotation onset past its presentation, in seconds, for
 # rounding in exported alignments.
 DURATION_TOLERANCE = 1e-6
 
@@ -137,10 +137,15 @@ def expand_presentations(
     ``stim_id`` value are kept. The result is sorted by onset with a stable
     sort, so rows with equal onsets keep their input order.
 
+    A presentation with a positive duration truncates its annotation: rows
+    that start after the presentation ends are dropped, and a row that runs
+    past the end is shortened to it. A run whose scan stopped during a stimulus
+    therefore needs no edited events. Checking that a presentation is as long
+    as its stimulus belongs to the events' authors, not to modeling.
+
     Return the expanded table and a mapping from each ``stim_id`` to the path
     and SHA-256 of the annotation file used. Raise ValueError for column
-    collisions and for annotations that outlast a presentation with a positive
-    duration.
+    collisions.
     """
     import numpy as np
     import pandas as pd
@@ -172,14 +177,15 @@ def expand_presentations(
         table = loaded[stim_id]
         start = float(row["onset"])
         length = float(row["duration"])
-        ends = table["onset"].to_numpy(float) + table["duration"].to_numpy(float)
-        if length > 0 and (ends > length + DURATION_TOLERANCE).any():
-            raise ValueError(
-                f"annot-{annotation} events for {stim_id} end after its {length:g} s "
-                f"presentation at onset {start:g} in {source}"
-            )
         expanded = table.copy()
-        expanded["onset"] = start + table["onset"].to_numpy(float)
+        if length > 0:
+            offsets = expanded["onset"].to_numpy(float)
+            expanded = expanded[offsets <= length + DURATION_TOLERANCE].copy()
+            remaining = length - expanded["onset"].to_numpy(float)
+            expanded["duration"] = np.minimum(
+                expanded["duration"].to_numpy(float), np.maximum(remaining, 0.0)
+            )
+        expanded["onset"] = start + expanded["onset"].to_numpy(float)
         for column in events.columns:
             if column not in {"onset", "duration", "stim_id"}:
                 expanded[column] = row[column]
