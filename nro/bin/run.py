@@ -707,7 +707,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
 
     planner = Planner(registry, bids_root=bids_root)
     scientific_revisions = registry.work_item_revisions() if branch_execution else {}
-    from nro.modules.contrasts.stimuli import StimulusAnnotationError
+    from nro.engine.stimuli import StimulusAnnotationError
 
     try:
         if args.study_analysis:

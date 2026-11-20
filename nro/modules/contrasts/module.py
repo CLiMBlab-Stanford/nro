@@ -25,6 +25,7 @@ from nro.engine.io import (
 )
 from nro.engine.paths import module_artifact_root
 from nro.engine.references import portable_public_payload
+from nro.engine.stimuli import annotation_inputs, expand_presentations
 from nro.engine.targets import is_surface_space
 from nro.engine.templates import find_fsaverage_surface
 from nro.orchestration.execution_context import ExecutionContext
@@ -46,7 +47,6 @@ from .models import validate_run_groups
 from .paths import artifact_root, completion_path, node_prefix, work_item_prefix
 from .report import write_design
 from .statistics import RunFit, UnidentifiableDesignError, fit_glm, percent_signal_change
-from .stimuli import annotation_inputs, expand_presentations
 from .task_models import scientific_model
 
 LOG = logging.getLogger(__name__)

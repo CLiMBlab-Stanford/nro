@@ -9,6 +9,7 @@ temporal_mask_regex: '.*outlier.*'
 standardize: true
 detrend: true
 regress_out_task: true
+task_annotation: none
 low_pass: 0.1
 high_pass: 0.01
 overwrite: false

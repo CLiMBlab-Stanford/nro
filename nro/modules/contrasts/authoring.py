@@ -11,7 +11,7 @@ import pandas as pd
 import yaml
 
 from nro.engine.bids import bids_dataset_root, discover_raw_runs, resolve_bids_table
-from nro.modules.contrasts.stimuli import (
+from nro.engine.stimuli import (
     available_annotations,
     expand_presentations,
     presentation_ids,

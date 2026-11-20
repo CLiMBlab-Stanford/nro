@@ -4,8 +4,9 @@ import fnmatch
 import re
 from copy import deepcopy
 
+from nro.engine.stimuli import validate_annotation_label
+
 from .models import contrast_weights, validate_model
-from .stimuli import validate_annotation_label
 
 NUISANCE_KEYS = (
     "confounds_regex",

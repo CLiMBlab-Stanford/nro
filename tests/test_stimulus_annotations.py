@@ -14,16 +14,16 @@ from test_contrasts import _synthetic_project
 from nro.definitions.store import ConfigStore
 from nro.engine.bids import discover_raw_runs
 from nro.engine.io import read_public_json
+from nro.engine.stimuli import (
+    StimulusAnnotationError,
+    annotation_inputs,
+    expand_presentations,
+)
 from nro.modules.contrasts.authoring import model_draft
 from nro.modules.contrasts.compiler import compile_model
 from nro.modules.contrasts.contract import validate_completion
 from nro.modules.contrasts.module import run_module
 from nro.modules.contrasts.planning import _planned_inputs, direct_inputs
-from nro.modules.contrasts.stimuli import (
-    StimulusAnnotationError,
-    annotation_inputs,
-    expand_presentations,
-)
 from nro.modules.contrasts.task_models import scientific_model, validate_task_model
 
 WORDS = {
