@@ -260,6 +260,12 @@ def event_design(
     for name, amplitudes in sparse.items():
         if name in values:
             raise ValueError(f"Event/confound variable collision: {name}")
+        missing = int((~np.isfinite(np.asarray(amplitudes, dtype=float))).sum())
+        if missing:
+            raise ValueError(
+                f"Event variable {name} has {missing} missing or non-finite values; "
+                "predictors need a value on every event"
+            )
         if name in convolutions:
             # Canonical kernels have a discrete sum of one. Scale an impulse
             # by the inverse oversampling interval so its area, like a block's

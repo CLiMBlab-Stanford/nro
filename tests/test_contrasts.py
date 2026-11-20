@@ -1303,3 +1303,20 @@ def test_node_prefixes_keep_the_task_only_for_multi_task_models(tmp_path: Path) 
     assert pooled.name == f"{prefix}_node-run_ses-1_task-taskB_run-01"
     assert other.name == f"{prefix}_node-run_ses-1_task-taskA_run-01"
     assert single.parent == pooled.parent == other.parent == tmp_path / "ses-1/task-taskB/node-run"
+
+
+def test_missing_predictor_values_are_refused() -> None:
+    from nro.modules.contrasts.models import event_design
+
+    node = {
+        "Model": {
+            "X": ["pause", 1],
+            "HRF": {"Variables": ["pause"], "Model": "spm"},
+        }
+    }
+    events = pd.DataFrame(
+        {"onset": [2.0, 4.0, 6.0], "duration": [0.0] * 3, "pause": [0.2, np.nan, 0.1]}
+    )
+    confounds = pd.DataFrame(index=np.arange(20))
+    with pytest.raises(ValueError, match="pause has 1 missing or non-finite values"):
+        event_design(node, events, confounds, 2.0)
