@@ -127,9 +127,14 @@ file, lists the annotations that are present for the stimulus, and suggests
 - a presented stimulus has no file for the named annotation;
 - an event column other than `onset` and `duration` appears in both the run
   events and the annotation file;
-- an annotation event ends after the end of a presentation with a positive
-  `duration`;
 - the stimulus has `part-<label>` annotation files. Parts are not supported yet.
+
+A presentation with a positive `duration` truncates its annotation: rows that
+start after it ends are dropped, and a row that runs past the end is shortened.
+A run whose scan stopped during a stimulus therefore needs no edited events.
+
+Every predictor needs a value on every event. A missing (`n/a`) or non-finite
+value is an error that names the variable, rather than a regressor of NaNs.
 
 Models without `annotation` use the run events unchanged. The annotation label
 is part of the scientific model, so variants that differ only in `annotation`
