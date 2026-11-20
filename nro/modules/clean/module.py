@@ -124,6 +124,12 @@ def build_module(
     )
     ap.add_argument("--no-regress-out-task", action="store_false", dest="regress_out_task")
     ap.add_argument(
+        "--task-annotation",
+        default=str(cfg.task_annotation),
+        help="Stimulus annotation level that task regression expands presentations with, "
+        "or none to regress presentations as blocks",
+    )
+    ap.add_argument(
         "--low-pass",
         type=float,
         default=None if cfg.low_pass is None else float(cfg.low_pass),
@@ -326,8 +332,15 @@ def build_module(
         confounds_tsv,
         confounds_json,
     ]
+    # Task regression reads the events and the annotations they expand with.
+    task_inputs: tuple[Path, ...] = ()
     if events_available:
-        source_inputs.append(events_path)
+        from nro.engine.stimuli import annotation_inputs
+
+        task_inputs = (events_path,)
+        if args.regress_out_task and args.task_annotation != "none":
+            task_inputs += annotation_inputs(events_path, events_path, args.task_annotation)
+    source_inputs.extend(task_inputs)
     functional_paths: list[Path] = []
     for variant in variants:
         for volume in variant["vols"]:
@@ -452,6 +465,7 @@ def build_module(
             tr=tr,
             start_time=start_time,
             regress_out_task=bool(args.regress_out_task and events_available),
+            task_annotation=str(args.task_annotation),
         )
         selected.to_csv(selected_confounds_path, sep="\t", index=False)
         task.to_csv(task_regressors_path, sep="\t", index=False)
@@ -477,7 +491,7 @@ def build_module(
                     confounds_tsv,
                     confounds_json,
                     initialized,
-                    *((events_path,) if events_available else ()),
+                    *task_inputs,
                 ),
                 force=bool(args.overwrite),
                 action=prepare_confounds,
@@ -550,7 +564,7 @@ def build_module(
             )
         )
         sidecar["Sources"] = [str(source), str(confounds_tsv)] + (
-            [str(events_path)] if args.regress_out_task and events_available else []
+            [str(path) for path in task_inputs] if args.regress_out_task else []
         )
         sidecar["Cleaning"] = {
             "CleanID": str(args.clean_id),
@@ -706,7 +720,7 @@ def build_module(
                             sidecar_json_path(volume),
                             confounds_tsv,
                             *projection_inputs,
-                            *((events_path,) if events_available else ()),
+                            *task_inputs,
                         ),
                         force=bool(args.overwrite),
                         action=lambda path=metadata_path, source=volume, cleaned=clean_input, desc=input_desc, mask_path=gm_mask, quality=quality_path: (
@@ -818,7 +832,7 @@ def build_module(
                                 sidecar_json_path(surface),
                                 confounds_tsv,
                                 *projection_inputs,
-                                *((events_path,) if events_available else ()),
+                                *task_inputs,
                             ),
                             force=bool(args.overwrite),
                             action=lambda path=metadata_path, source=surface, cleaned=clean_input, desc=input_desc, quality=quality_path: (

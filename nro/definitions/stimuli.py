@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from nro.definitions.annotation_levels import ANNOTATION_LEVELS  # noqa: F401
 from nro.engine.events import validate_events
 
 STIMULUS_ID = re.compile(r"stim-[A-Za-z0-9]+")
@@ -22,20 +23,6 @@ STIMULI_COLUMNS = ("stimulus_id", "type", "license", "present")
 TABLES = {"stimuli.tsv", "stimuli.json", "annotations.tsv", "annotations.json"}
 SOURCE_FIELD = "NROStimulusSource"
 VERSION_FIELD = "NROVersion"
-# The annotation levels that nro defines, with the description that
-# ``nro stimuli publish`` writes to the catalog's ``annotations.tsv``. A level
-# means the same for every stimulus; each annotation's sidecar describes its
-# own columns and sources.
-ANNOTATION_LEVELS = {
-    "words": (
-        "Words of the stimulus, one row per word at its onset in seconds from the start "
-        "of the stimulus"
-    ),
-    "phonemes": (
-        "Phonemes of the stimulus, one row per phoneme at its onset in seconds from the "
-        "start of the stimulus"
-    ),
-}
 
 
 @dataclass(frozen=True)

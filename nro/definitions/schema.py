@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
 
+from .annotation_levels import ANNOTATION_LEVELS
 from .parsing import DefinitionError
 
 
@@ -255,6 +256,7 @@ SCHEMAS = {
         "standardize": BOOL,
         "detrend": BOOL,
         "regress_out_task": BOOL,
+        "task_annotation": enum("none", *ANNOTATION_LEVELS),
         "low_pass": Field("float", nullable=True, minimum=0, exclusive_minimum=True),
         "high_pass": Field("float", nullable=True, minimum=0),
         "overwrite": EXEC_BOOL,

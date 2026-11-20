@@ -51,11 +51,22 @@ FCGRADIENTS_CHAIN = _source_selection_chain(
     ),
 )
 
+CLEAN_CHAIN = _source_selection_chain(
+    "clean",
+    ContractMigration(
+        destination=5,
+        summary="Select the stimulus annotation that task regression expands presentations with",
+        configuration=(AddField("task_annotation", default="none", historical="none"),),
+    ),
+)
+
 CHAINS = {
     module: ANAT_CHAIN
     if module == "anat"
     else FCGRADIENTS_CHAIN
     if module == "fcgradients"
+    else CLEAN_CHAIN
+    if module == "clean"
     else _source_selection_chain(module)
     for module in MODULE_NAMES
 }

@@ -21,8 +21,15 @@ downstream analyses must exclude.
    gray-matter masking uses `gm_mask_threshold`. Zero FWHM skips smoothing.
 3. **Build the temporal model.** nro builds a real Fourier basis for the band
    between `high_pass` and `low_pass` Hz and fits it on retained frames. Task
-   terms are added when `regress_out_task` is true and events exist. With
-   `detrend`, detrending adds exact model terms.
+   terms are added when `regress_out_task` is true and events exist: one
+   regressor per `trial_type`, convolved with the SPM HRF. `task_annotation`
+   sets how an event row with a `stim_id` enters the model. With `none`, the
+   default, the presentation is one block of its duration. With an
+   [annotation level](../stimulus-files.md#annotation-levels) such as `words`,
+   the presentation is replaced by the rows of that annotation of its
+   stimulus, which must be in the project; the annotation files are then
+   inputs of the cleaning, so syncing a new annotation version makes it stale.
+   With `detrend`, detrending adds exact model terms.
 4. **Reduce the nuisance design.** Exact and nuisance regressors are projected
    into passband coordinates. nro removes the exact task and detrending
    directions, standardizes the remaining nuisance design, and runs PCA. It
@@ -92,7 +99,8 @@ connectivity admission thresholds. `min_trs` rejects runs with too few original
 frames before graph construction.
 
 **Model.** `gm_mask_threshold` sets gray-matter support. `regress_out_task`,
-`detrend`, `standardize`, `high_pass`, and `low_pass` change the model.
+`task_annotation`, `detrend`, `standardize`, `high_pass`, and `low_pass` change
+the model.
 Smoothing is selected per work item and is not a `clean` configuration key.
 
 **Execution.** Container settings select Workbench and other external

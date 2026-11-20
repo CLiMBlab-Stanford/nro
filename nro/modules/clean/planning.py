@@ -18,13 +18,22 @@ if TYPE_CHECKING:
 def clean_direct_inputs(
     run: BidsRun, clean_config: Mapping[str, object], *, markup=None
 ) -> tuple[Path, ...]:
-    """Return task-event inputs that participate in a cleaning contract."""
+    """Return task-event inputs that participate in a cleaning contract.
+
+    These are the run's events file and, unless ``task_annotation`` is
+    ``none``, the annotation file of that level for each presented stimulus.
+    """
     if not clean_config.get("regress_out_task"):
         return ()
     events = run.path.parent / f"{run.stem}_events.tsv"
-    return (
-        (events,) if events.is_file() and (markup is None or not markup.is_excluded(events)) else ()
-    )
+    if not events.is_file() or (markup is not None and markup.is_excluded(events)):
+        return ()
+    annotation = str(clean_config.get("task_annotation", "none"))
+    if annotation == "none":
+        return (events,)
+    from nro.engine.stimuli import annotation_inputs
+
+    return (events, *annotation_inputs(events, run.path, annotation))
 
 
 def plan_work_items(

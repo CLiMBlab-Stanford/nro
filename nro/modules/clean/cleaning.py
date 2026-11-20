@@ -74,7 +74,14 @@ def _build_task_regressors(
     n_scans: int,
     tr: float,
     start_time: float,
+    annotation: str = "none",
 ) -> tuple[list[pd.DataFrame], dict[str, dict[str, Any]]]:
+    """Build one HRF-convolved regressor per trial type.
+
+    With ``annotation`` naming a stimulus annotation level, each presentation
+    row with a ``stim_id`` is replaced by that annotation's rows; with
+    ``none``, presentations are regressed as blocks of their durations.
+    """
     try:
         from nilearn import glm
     except Exception as e:  # pragma: no cover
@@ -83,6 +90,16 @@ def _build_task_regressors(
     if not events_path.exists():
         return [], {}
     events = pd.read_csv(events_path, sep="\t")
+    if "stim_id" in events and annotation != "none":
+        from nro.engine.bids import bids_dataset_root
+        from nro.engine.stimuli import expand_presentations
+
+        events, _ = expand_presentations(
+            events,
+            annotation=annotation,
+            dataset_root=bids_dataset_root(events_path),
+            source=events_path,
+        )
     required = {"onset", "duration"}
     if not required.issubset(events.columns):
         return [], {}
@@ -115,6 +132,7 @@ def _filter_confounds(
     tr: float,
     start_time: float,
     regress_out_task: bool,
+    task_annotation: str = "none",
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     confounds = pd.read_csv(confounds_tsv, sep="\t")
     sidecar = read_json(confounds_json) if confounds_json.exists() else {}
@@ -127,6 +145,7 @@ def _filter_confounds(
             n_scans=n_scans,
             tr=tr,
             start_time=start_time,
+            annotation=task_annotation,
         )
         if task_regs:
             task = pd.concat(task_regs, axis=1)

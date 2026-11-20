@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 
 from nro.engine.bids import matches_filter, resolve_bids_table
+from nro.engine.stimuli import StimulusAnnotationError, annotation_inputs
 from nro.orchestration.contracts import WorkItemSpec
 
 from .paths import artifact_root, completion_path, work_item_prefix
-from .stimuli import StimulusAnnotationError, annotation_inputs
 from .task_models import load_task_model, scientific_model, source_tasks
 
 
