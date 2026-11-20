@@ -65,6 +65,7 @@ class PublishPlan:
 
     @property
     def changed(self) -> bool:
+        """Return whether publication writes any file."""
         return bool(self.updates)
 
 

@@ -12,14 +12,14 @@ tests = ["tests/test_orchestration_planner.py", "tests/test_orchestration_runner
 boundaries = ["tests/test_runner_contract.py", "tests/test_artifact_resolution.py", "tests/test_execution_invariance.py", "tests/test_orchestration_worker.py::test_stop_preserves_demand_as_resumable_state", "tests/test_orchestration_worker.py::test_new_request_reactivates_stopped_work", "tests/test_orchestration_worker.py::test_stale_inherited_input_joins_active_request_closure", "tests/test_user_commands.py::test_run_resume_reactivates_stopped_demand"]
 
 [scope.definitions]
-paths = ["nro/definitions/**", "tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_definition_migrations.py", "tests/test_markup.py", "tests/test_model_canonicalization.py", "tests/test_bids_run_selectors.py", "tests/test_definition_authoring.py", "tests/test_stimulus_catalog.py"]
-tests = ["tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_definition_migrations.py", "tests/test_markup.py", "tests/test_stimulus_catalog.py"]
+paths = ["nro/definitions/**", "tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_definition_migrations.py", "tests/test_markup.py", "tests/test_model_canonicalization.py", "tests/test_bids_run_selectors.py", "tests/test_definition_authoring.py", "tests/test_stimulus_catalog.py", "tests/test_stimulus_publish.py"]
+tests = ["tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_definition_migrations.py", "tests/test_markup.py", "tests/test_stimulus_catalog.py", "tests/test_stimulus_publish.py"]
 boundaries = ["tests/test_workflow_registry.py", "tests/test_execution_invariance.py"]
 downstream = ["anat", "func", "clean", "dynconn", "microparcellation", "networks", "fcgradients", "contrasts"]
 
 [scope.commands]
-paths = ["nro/bin/**", "nro/cli.py", "nro/qc/**", "nro/viz/**", "tests/test_viz.py", "tests/test_user_commands.py", "tests/test_cli.py", "tests/test_find.py", "tests/test_gc.py", "tests/test_log.py", "tests/test_migrate_cli.py", "tests/test_scene.py", "tests/test_render.py", "tests/test_purge.py", "tests/test_project_rename.py", "tests/test_doctor.py", "tests/test_qc_registration.py"]
-tests = ["tests/test_cli.py", "tests/test_user_commands.py", "tests/test_find.py", "tests/test_gc.py", "tests/test_migrate_cli.py", "tests/test_viz.py"]
+paths = ["nro/bin/**", "nro/cli.py", "nro/qc/**", "nro/viz/**", "tests/test_viz.py", "tests/test_user_commands.py", "tests/test_cli.py", "tests/test_find.py", "tests/test_gc.py", "tests/test_log.py", "tests/test_migrate_cli.py", "tests/test_scene.py", "tests/test_render.py", "tests/test_purge.py", "tests/test_project_rename.py", "tests/test_doctor.py", "tests/test_qc_registration.py", "tests/test_tasks.py"]
+tests = ["tests/test_cli.py", "tests/test_user_commands.py", "tests/test_find.py", "tests/test_gc.py", "tests/test_migrate_cli.py", "tests/test_viz.py", "tests/test_tasks.py"]
 boundaries = ["tests/test_orchestration_planner.py"]
 
 [scope.installation]
