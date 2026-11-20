@@ -6,7 +6,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import yaml
 
@@ -129,7 +129,20 @@ def _matches_selection(row: dict, selection) -> bool:
 
 def _excluded_selection(rows: list[dict], dependencies, selection, *, bids_root: Path) -> set[int]:
     """Select excluded-source work and force its downstream closure into the purge."""
-    affected = _descendant_closure(_excluded_work_item_ids(rows, bids_root=bids_root), dependencies)
+    return _closure_selection(
+        rows, dependencies, selection, _excluded_work_item_ids(rows, bids_root=bids_root)
+    )
+
+
+def _closure_selection(
+    rows: list[dict], dependencies, selection, root_ids: Iterable[int]
+) -> set[int]:
+    """Select defective roots and every downstream consumer, narrowed by selectors.
+
+    Selectors choose which affected work items start the purge. Consumers of a
+    chosen item are always included, even when they fall outside the selectors.
+    """
+    affected = _descendant_closure(root_ids, dependencies)
     roots = {
         int(row["id"])
         for row in rows
@@ -343,11 +356,19 @@ def _planned_paths(
 
 
 def _render_plan(
-    public: list[Path], private: list[Path], *, logs_only: bool, excluded: bool = False
+    public: list[Path],
+    private: list[Path],
+    *,
+    logs_only: bool,
+    excluded: bool = False,
+    title: str | None = None,
 ) -> str:
-    title = (
-        "Planned purge (excluded sources and downstream consumers)" if excluded else "Planned purge"
-    )
+    if title is None:
+        title = (
+            "Planned purge (excluded sources and downstream consumers)"
+            if excluded
+            else "Planned purge"
+        )
     lines = [title, ""]
     if logs_only:
         lines.append("No derivative paths will be removed; only eligible logs are selected.")
@@ -469,7 +490,22 @@ def _purge_cache(args) -> None:
             print(f"Cleanup deferred: {result.reason}.")
 
 
-def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
+def _branch_purge(
+    args,
+    selection,
+    *,
+    values: dict,
+    checkout: Path,
+    defect_roots: Callable[[list[dict]], set[int]] | None = None,
+    title: str | None = None,
+) -> None:
+    """Purge owned work through the central scheduler.
+
+    `defect_roots` receives the owned work-item snapshot rows and returns the
+    IDs of defective work items. When given, the purge covers those items that
+    match `selection` and all of their downstream consumers, as `--excluded`
+    does for excluded inputs. `title` replaces the heading of the preview.
+    """
     from types import SimpleNamespace
 
     from nro.orchestration.execution_context import ExecutionContext
@@ -490,16 +526,22 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
         include_scientific_inputs=args.excluded,
         selection_only=True,
     )
-    excluded_ids = (
-        _excluded_selection(
+    if defect_roots is not None:
+        excluded_ids = _closure_selection(
+            snapshot["rows"],
+            snapshot.get("dependencies", ()),
+            selection,
+            defect_roots(snapshot["rows"]),
+        )
+    elif args.excluded:
+        excluded_ids = _excluded_selection(
             snapshot["rows"],
             snapshot.get("dependencies", ()),
             selection,
             bids_root=bids_root,
         )
-        if args.excluded
-        else None
-    )
+    else:
+        excluded_ids = None
     selected_ids = {
         int(row["id"])
         for row in snapshot["rows"]
@@ -562,6 +604,7 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
                 sorted(private),
                 logs_only=args.logs,
                 excluded=args.excluded,
+                title=title,
             )
         )
     if not args.force and not args.dry_run and not confirm("Proceed with purge?"):
@@ -578,7 +621,15 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
     )
     result.update(
         projects=len(projects),
-        mode="logs" if args.logs else "excluded" if args.excluded else "all",
+        mode=(
+            "logs"
+            if args.logs
+            else "excluded"
+            if args.excluded
+            else "defect"
+            if defect_roots is not None
+            else "all"
+        ),
         dry_run=args.dry_run,
         planned_public_paths=list(map(str, sorted(public))),
         planned_private_paths=list(map(str, sorted(private))),

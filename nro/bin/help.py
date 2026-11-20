@@ -87,6 +87,10 @@ TASK_GUIDES = {
 
           nro find -P PROJECT -p PARTICIPANT -r task='Rest.*'
 
+        Count source BOLD runs by task ID:
+
+          nro tasks -P PROJECT
+
         Open matching work-item logs or worker logs:
 
           nro log -P PROJECT -p PARTICIPANT -m MODULE

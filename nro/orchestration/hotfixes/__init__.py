@@ -32,6 +32,18 @@ class Hotfix(Protocol):
         ...
 
 
+class PurgeHotfix(Hotfix, Protocol):
+    """Define a hotfix that removes defective derivatives instead of repairing records.
+
+    `nro hotfix` passes the owned work-item snapshot rows to `purge_roots` and
+    purges the returned work items with all of their downstream consumers.
+    """
+
+    def purge_roots(self, rows: list[dict]) -> set[int]:
+        """Return the IDs of work items whose derivatives the defect corrupted."""
+        ...
+
+
 def available() -> dict[str, Hotfix]:
     """Load the release-scoped hotfix modules shipped by this version."""
     loaded: dict[str, Hotfix] = {}

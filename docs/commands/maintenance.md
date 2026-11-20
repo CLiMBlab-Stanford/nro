@@ -375,9 +375,28 @@ the repair without a prompt. Pass several project IDs after `-P`; omitting
 
 Like `nro migrate`, the command runs through the central scheduler and is
 available only from the main installation. Applying a hotfix requires that the
-selected projects have no queued or running attempts. A hotfix changes no
-public derivative. The next request recomputes the work whose records it
-removed.
+selected projects have no queued or running attempts. A record-repair hotfix
+changes no public derivative. The next request recomputes the work whose
+records it removed.
+
+A purge hotfix handles a defect that left corrupt outputs looking fresh. It
+selects the affected work items, adds all of their downstream consumers, and
+removes their public derivatives, WORK intermediates, and logs as
+`nro purge --excluded` does. The preview, confirmation, refusal of active
+attempts, and withdrawal of demand follow `nro purge`. Rerun the original
+requests afterward to rebuild the purged work.
+
+`v0473-afni-oblique-grid` is a purge hotfix. Before 0.47.3, nro could express
+the AFNI warp and motion transforms for an oblique BOLD run on other cardinal
+axes than AFNI used. This happened only for grids tilted close to 45 degrees.
+The resampled 4D BOLD in each output space was then displaced far from the
+registered boldref. The hotfix selects `func` work whose source BOLD or output
+boldref has such a grid:
+
+```bash
+nro hotfix v0473-afni-oblique-grid -P PROJECT --dry-run
+nro hotfix v0473-afni-oblique-grid -P PROJECT
+```
 
 ## `nro publish`
 

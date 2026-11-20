@@ -1,14 +1,28 @@
-"""Copy stimulus annotations from the definitions catalog into BIDS projects."""
+"""Publish stimulus annotations to the definitions catalog and copy them into projects."""
 
 import argparse
+from pathlib import Path
 
 from nro.site import configuration as site
 
 
 def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
-    """Compare or update one project's ``stimuli/`` directory against the catalog."""
+    """Publish staged annotations, or synchronize one project's ``stimuli/`` directory."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    publish = commands.add_parser(
+        "publish",
+        help="Publish a staged directory of stimulus annotations to the definitions catalog",
+        description=(
+            "Validate a staged directory in the layout of DEFINITIONS/stimuli, assign each "
+            "annotation's NROVersion, add new stimuli.tsv and annotations.tsv rows, and "
+            "publish the batch to the selected definitions store in one transaction."
+        ),
+    )
+    publish.add_argument("directory", type=Path, help="Staged catalog directory")
+    publish.add_argument(
+        "--dry-run", action="store_true", help="Report what would change without publishing"
+    )
     sync = commands.add_parser(
         "sync",
         help="Copy the annotations of every stimulus that the project's events name",
@@ -23,6 +37,9 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
         "--dry-run", action="store_true", help="Report differences without changing files"
     )
     args = parser.parse_args(argv)
+    if args.command == "publish":
+        _publish(args)
+        return
 
     from nro.definitions.stimuli import StimulusCatalog
     from nro.definitions.stimulus_sync import describe, plan_sync
@@ -53,6 +70,19 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
             "Some stimuli could not be synchronized. Add unknown stimuli to the catalog with "
             "`nro def apply`, and resolve blocked files by hand."
         )
+
+
+def _publish(args: argparse.Namespace) -> None:
+    from nro.definitions.stimulus_publish import describe, publish_stimuli
+
+    try:
+        plan = publish_stimuli(args.directory, dry_run=args.dry_run)
+    except (OSError, ValueError) as error:
+        raise SystemExit(str(error)) from None
+    for line in describe(plan, dry_run=args.dry_run):
+        print(line)
+    if plan.changed and not args.dry_run:
+        print("Copy the new versions into projects with `nro stimuli sync PROJECT`.")
 
 
 def _apply_guarded(plan, project: str, *, replace: bool):

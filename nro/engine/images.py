@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import itertools
 import shutil
 import struct
 from pathlib import Path
@@ -227,3 +228,37 @@ def write_cifti_dense_scalar(
     with atomic_output_path(path) as staged:
         nib.save(nib.Cifti2Image(data, header=header, dtype=np.float32), str(staged))
     return path
+
+
+def afni_orientation(affine: np.ndarray) -> np.ndarray:
+    """Return the voxel-axis orientation AFNI assigns to a possibly oblique affine.
+
+    The result has nibabel's `io_orientation` layout: one row per voxel axis
+    holding the RAS world axis and its direction. AFNI chooses the signed axis
+    permutation that maximizes the trace of its product with the orthogonalized
+    direction matrix, as in `nifti_mat44_to_orientation` from nifti1_io. For a
+    grid tilted near 45 degrees this can differ from `io_orientation`, which
+    assigns axes greedily.
+    """
+    directions = np.asarray(affine, dtype=np.float64)[:3, :3]
+    norms = np.linalg.norm(directions, axis=0)
+    if np.any(norms == 0.0):
+        raise ValueError("Affine has a zero-length voxel axis")
+    left, _singular, right = np.linalg.svd(directions / norms)
+    rotation = left @ right
+    rotation_sign = np.sign(np.linalg.det(rotation))
+    best_value = -np.inf
+    best = None
+    for axes in itertools.permutations(range(3)):
+        for signs in itertools.product((-1.0, 1.0), repeat=3):
+            permutation = np.zeros((3, 3))
+            permutation[range(3), axes] = signs
+            if np.linalg.det(permutation) * rotation_sign <= 0.0:
+                continue
+            value = float(np.trace(permutation @ rotation))
+            if value > best_value:
+                best_value = value
+                best = np.column_stack((axes, signs))
+    if best is None:
+        raise ValueError("Affine has degenerate voxel axes")
+    return best
