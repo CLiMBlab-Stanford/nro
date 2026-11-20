@@ -310,3 +310,22 @@ def test_cli_refuses_writes_while_project_attempts_are_active(tmp_path, monkeypa
     db.execute("UPDATE attempts SET state='succeeded'")
     command.main(["sync", "demo"])
     assert (tmp_path / "bids/demo/stimuli/stim-story1_annot-words_events.tsv").is_file()
+
+
+def test_cli_syncs_several_projects(tmp_path, monkeypatch, capsys):
+    from nro.bin import stimuli as command
+    from nro.site import configuration as site
+
+    store = _catalog(tmp_path / "store")
+    _project(tmp_path / "bids/one")
+    _project(tmp_path / "bids/two")
+    monkeypatch.setattr(site, "bids_root", lambda: tmp_path / "bids")
+    monkeypatch.setattr(site, "definitions_roots", lambda: (store,))
+    monkeypatch.setattr(site, "installation_record", lambda: {})
+    command.main(["sync", "one", "two"])
+    output = capsys.readouterr().out
+    assert "== one" in output and "== two" in output
+    assert output.count("copied    stim-story1_annot-words_events.tsv v1") == 2
+    assert (tmp_path / "bids/two/stimuli/stim-story1_annot-words_events.tsv").is_file()
+    with pytest.raises(SystemExit):
+        command.main(["sync", "one", "missing"])
