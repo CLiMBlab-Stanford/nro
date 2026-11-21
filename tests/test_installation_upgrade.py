@@ -85,7 +85,25 @@ def test_nro_install_runs_the_checkouts_install(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(install.os, "execv", lambda path, argv: calls.append((path, argv)))
     monkeypatch.setattr(install.os, "chdir", lambda path: None)
+    monkeypatch.setattr(
+        "nro.site.configuration.installation_record", lambda: {"checkout": str(ROOT)}
+    )
     install.main(["--upgrade", "--maintain"])
     script = str(ROOT / "install")
     assert calls == [(script, [script, "--upgrade", "--maintain"])]
     assert "Running" in capsys.readouterr().out
+
+
+def test_nro_install_uses_the_recorded_checkout_from_a_snapshot(tmp_path, monkeypatch):
+    from nro.bin import install
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "install").write_text("#!/bin/sh\n")
+    (checkout / "pyproject.toml").write_text("")
+    monkeypatch.setattr(
+        "nro.site.configuration.installation_record", lambda: {"checkout": str(checkout)}
+    )
+    assert install.checkout() == checkout
+    monkeypatch.setattr("nro.site.configuration.installation_record", lambda: {})
+    assert install.checkout() == ROOT

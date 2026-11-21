@@ -15,8 +15,16 @@ from pathlib import Path
 
 
 def checkout() -> Path:
-    """Return the checkout of the running nro package, which holds ``./install``."""
-    root = Path(__file__).resolve().parents[2]
+    """Return the installation's checkout, which holds ``./install``.
+
+    An installed nro runs from a verified application snapshot, so the
+    checkout comes from the installation record; a checkout run directly,
+    without a record, is the package's own repository.
+    """
+    from nro.site.configuration import installation_record
+
+    recorded = installation_record().get("checkout")
+    root = Path(recorded) if recorded else Path(__file__).resolve().parents[2]
     if not (root / "install").is_file() or not (root / "pyproject.toml").is_file():
         raise SystemExit(
             f"nro install needs the nro checkout's ./install, but {root} is not a checkout; "
