@@ -386,7 +386,7 @@ removes their public derivatives, WORK intermediates, and logs as
 attempts, and withdrawal of demand follow `nro purge`. Rerun the original
 requests afterward to rebuild the purged work.
 
-`v0473-afni-oblique-grid` is a purge hotfix. Before 0.47.3, nro could express
+`v0480-afni-oblique-grid` is a purge hotfix. Before 0.48.0, nro could express
 the AFNI warp and motion transforms for an oblique BOLD run on other cardinal
 axes than AFNI used. This happened only for grids tilted close to 45 degrees.
 The resampled 4D BOLD in each output space was then displaced far from the
@@ -394,8 +394,8 @@ registered boldref. The hotfix selects `func` work whose source BOLD or output
 boldref has such a grid:
 
 ```bash
-nro hotfix v0473-afni-oblique-grid -P PROJECT --dry-run
-nro hotfix v0473-afni-oblique-grid -P PROJECT
+nro hotfix v0480-afni-oblique-grid -P PROJECT --dry-run
+nro hotfix v0480-afni-oblique-grid -P PROJECT
 ```
 
 ## `nro publish`
