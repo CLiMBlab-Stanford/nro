@@ -1125,7 +1125,7 @@ def test_afni_oblique_grid_hotfix_selects_misread_functional_grids(tmp_path: Pat
     import numpy as np
     from oblique_grids import CLEARLY_OBLIQUE_BOLD_AFFINE, NEAR_DIAGONAL_BOLD_AFFINE
 
-    from nro.orchestration.hotfixes import v0473_afni_oblique_grid as hotfix
+    from nro.orchestration.hotfixes import v0480_afni_oblique_grid as hotfix
 
     near = _bold(tmp_path / "raw/sub-1_task-a_bold.nii.gz", NEAR_DIAGONAL_BOLD_AFFINE)
     clear = _bold(tmp_path / "raw/sub-1_task-b_bold.nii.gz", CLEARLY_OBLIQUE_BOLD_AFFINE)
@@ -1191,9 +1191,9 @@ def test_purge_hotfix_runs_through_branch_purge(monkeypatch) -> None:
         purge, "_branch_purge", lambda args, selection, **kwargs: calls.append((args, kwargs))
     )
 
-    hotfix.main(["v0473-afni-oblique-grid", "-P", "ev", "--dry-run"])
+    hotfix.main(["v0480-afni-oblique-grid", "-P", "ev", "--dry-run"])
 
     args, kwargs = calls[0]
     assert args.project == ["ev"] and args.dry_run and not args.force
     assert kwargs["defect_roots"].__name__ == "purge_roots"
-    assert "v0473-afni-oblique-grid" in kwargs["title"]
+    assert "v0480-afni-oblique-grid" in kwargs["title"]

@@ -175,14 +175,19 @@ def _fourier_passband_basis(
     high_pass: Optional[float],
     low_pass: Optional[float],
 ) -> tuple[np.ndarray, list[str], list[float]]:
-    """Build a real Fourier basis for frequencies inside the passband."""
+    """Build a real Fourier basis for frequencies inside the passband.
+
+    A `low_pass` above the Nyquist frequency removes nothing, because the run
+    samples no higher frequency. It is accepted so that one configuration can
+    serve runs with different repetition times.
+    """
     if n_scans < 2:
         return np.empty((n_scans, 0), dtype=np.float64), [], []
     nyquist = 0.5 / float(tr)
     if high_pass is not None and not 0.0 <= float(high_pass) < nyquist:
         raise ValueError(f"high_pass must be in [0, {nyquist:g}), got {high_pass}")
-    if low_pass is not None and not 0.0 < float(low_pass) <= nyquist:
-        raise ValueError(f"low_pass must be in (0, {nyquist:g}], got {low_pass}")
+    if low_pass is not None and not float(low_pass) > 0.0:
+        raise ValueError(f"low_pass must be positive, got {low_pass}")
     if high_pass is not None and low_pass is not None and float(high_pass) >= float(low_pass):
         raise ValueError(f"high_pass must be below low_pass: {high_pass} >= {low_pass}")
     if high_pass is None and low_pass is None:

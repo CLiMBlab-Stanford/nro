@@ -1,6 +1,6 @@
 """Purge functional work resampled on a cardinal grid that AFNI did not use.
 
-Before 0.47.3, nro chose the cardinal ("plumb") grid of an oblique image with
+Before 0.48.0, nro chose the cardinal ("plumb") grid of an oblique image with
 nibabel's `io_orientation`, while AFNI's `3dNwarpApply` chooses it with
 `nifti_mat44_to_orientation`. The two rules agree except for grids tilted close
 to 45 degrees. For such a grid, the AFNI warp and motion affines that nro wrote
@@ -29,7 +29,7 @@ import numpy as np
 
 from nro.engine.images import afni_orientation
 
-HOTFIX_ID = "v0473-afni-oblique-grid"
+HOTFIX_ID = "v0480-afni-oblique-grid"
 SUMMARY = "Purge functional runs whose oblique grid AFNI resampled on different cardinal axes."
 MANIFEST_SUFFIX = "_desc-preprocessFunc_manifest.json"
 READ_THREADS = 32

@@ -20,7 +20,9 @@ downstream analyses must exclude.
    surface or volume geometry before any temporal modeling. Volumetric
    gray-matter masking uses `gm_mask_threshold`. Zero FWHM skips smoothing.
 3. **Build the temporal model.** nro builds a real Fourier basis for the band
-   between `high_pass` and `low_pass` Hz and fits it on retained frames. Task
+   between `high_pass` and `low_pass` Hz and fits it on retained frames. A
+   `low_pass` above a run's Nyquist frequency, half its sampling rate, removes
+   nothing from that run. A `high_pass` must stay below Nyquist. Task
    terms are added when `regress_out_task` is true and events exist: one
    regressor per `trial_type`, convolved with the SPM HRF. `task_annotation`
    sets how an event row with a `stim_id` enters the model. With `none`, the

@@ -4,7 +4,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from nro.modules.clean.cleaning import _build_cleaning_projection, _cleaned_timecourse_quality
+from nro.modules.clean.cleaning import (
+    _build_cleaning_projection,
+    _cleaned_timecourse_quality,
+    _fourier_passband_basis,
+)
 
 
 def test_projection_fit_ignores_censored_signal_but_evaluates_every_frame() -> None:
@@ -189,3 +193,21 @@ def test_full_variance_target_keeps_every_nuisance_component() -> None:
     assert projection.cleaning_defined
     assert projection.nuisance_pca_components == 21
     assert projection.nuisance_variance_explained == pytest.approx(1.0)
+
+
+def test_low_pass_above_nyquist_keeps_every_sampled_frequency() -> None:
+    tr = 6.0
+    above, above_names, _ = _fourier_passband_basis(
+        n_scans=100, tr=tr, high_pass=0.008, low_pass=0.1
+    )
+    unfiltered, unfiltered_names, _ = _fourier_passband_basis(
+        n_scans=100, tr=tr, high_pass=0.008, low_pass=None
+    )
+
+    assert above_names == unfiltered_names
+    np.testing.assert_array_equal(above, unfiltered)
+
+
+def test_high_pass_at_nyquist_is_rejected() -> None:
+    with pytest.raises(ValueError, match="high_pass"):
+        _fourier_passband_basis(n_scans=100, tr=6.0, high_pass=0.5 / 6.0, low_pass=0.1)
