@@ -154,12 +154,10 @@ Start with a small, explicitly selected target:
 nro run -P example -p 01 -m anat
 ```
 
-On an installation created with `--local`, add `--local` to run one local
-worker:
-
-```bash
-nro run -P example -p 01 -m anat --local
-```
+On an installation created with `--local`, `nro run` runs one local worker
+instead of submitting Slurm jobs. Other installations do the same when Slurm is
+unavailable, which `nro run` checks by querying `sinfo`. Pass `--local` or
+`--no-local` to choose explicitly.
 
 The planner finds the selected BIDS data, records your request, reuses fresh
 outputs, and adds any required upstream work. Results go under the project's
@@ -183,8 +181,6 @@ cleaning:
 ```bash
 nro run -P example -p 01 -m microparcellation
 ```
-
-Add `--local` again when the site does not use Slurm.
 
 ## Selector scope
 

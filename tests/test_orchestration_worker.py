@@ -3747,3 +3747,21 @@ def test_idle_undersized_worker_does_not_block_larger_worker_supply(tmp_path: Pa
         resource_class="large",
         memory_gb=32,
     )
+
+
+def test_slurm_available_requires_commands_and_controller(monkeypatch) -> None:
+    import subprocess
+
+    from nro.orchestration import slurm_jobs
+
+    monkeypatch.setattr(slurm_jobs.shutil, "which", lambda name: None)
+    assert slurm_jobs.slurm_available() is False
+    monkeypatch.setattr(slurm_jobs.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(
+        slurm_jobs.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1)
+    )
+    assert slurm_jobs.slurm_available() is False
+    monkeypatch.setattr(
+        slurm_jobs.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0)
+    )
+    assert slurm_jobs.slurm_available() is True

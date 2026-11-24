@@ -2264,3 +2264,24 @@ def test_wb_view_leading_help_describes_wrapper(monkeypatch, capsys) -> None:
     wb_view.main(["--help"])
 
     assert "nro wb_view -help" in capsys.readouterr().out
+
+
+def test_run_local_defaults_follow_installation_and_slurm(monkeypatch) -> None:
+    from argparse import Namespace
+
+    from nro.bin.run import _default_local
+
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.slurm_available", lambda: True)
+    assert _default_local(Namespace(no_submit=False), {"local": True}) is True
+    assert _default_local(Namespace(no_submit=False), {}) is False
+    assert _default_local(Namespace(no_submit=True), {"local": True}) is False
+    monkeypatch.setattr("nro.orchestration.slurm_jobs.slurm_available", lambda: False)
+    assert _default_local(Namespace(no_submit=False), {}) is True
+
+
+def test_run_parser_accepts_explicit_local_choice() -> None:
+    from nro.bin.run import build_parser
+
+    assert build_parser().parse_args(["-P", "x"]).local is None
+    assert build_parser().parse_args(["-P", "x", "--local"]).local is True
+    assert build_parser().parse_args(["-P", "x", "--no-local"]).local is False

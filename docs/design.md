@@ -139,7 +139,8 @@ When a manifest supplies metadata, read it from the manifest instead of parsing
 a directory name.
 
 The default deployment uses Slurm, Singularity or Apptainer, and shared
-storage. `run --local` runs a worker on the current machine. It still needs the
+storage. `run --local` runs a worker on the current machine. It is the default
+when the installation was set up with `--local` or Slurm is unavailable. It still needs the
 processing dependencies and the configured filesystem.
 
 [Running derivative workflows](orchestration.md) explains what happens when you
