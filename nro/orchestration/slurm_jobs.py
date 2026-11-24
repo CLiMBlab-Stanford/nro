@@ -14,6 +14,26 @@ import subprocess
 from datetime import datetime, timezone
 
 
+def slurm_available() -> bool:
+    """Return whether this host can submit Slurm jobs.
+
+    Slurm counts as available when `sbatch` and `sinfo` are on PATH and
+    `sinfo` reaches the controller within 10 seconds.
+    """
+    if not (shutil.which("sbatch") and shutil.which("sinfo")):
+        return False
+    try:
+        result = subprocess.run(
+            ["sinfo", "--noheader", "--format", "%P"],
+            check=False,
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def job_terminal(job_id: str) -> bool | None:
     """Check whether a job has left Slurm; query failures remain unknown.
 

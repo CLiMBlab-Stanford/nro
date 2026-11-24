@@ -252,6 +252,20 @@ def _resume_targets(
     )
 
 
+def _default_local(args: argparse.Namespace, record: dict) -> bool:
+    """Choose local execution when the user did not pass --local or --no-local."""
+    if args.no_submit:
+        return False
+    if record.get("local"):
+        return True
+    from nro.orchestration.slurm_jobs import slurm_available
+
+    if slurm_available():
+        return False
+    print("Slurm is unavailable; running one local worker.", file=sys.stderr)
+    return True
+
+
 def _worker_options(args: argparse.Namespace) -> dict:
     """Return the worker supply options sent to the scheduler."""
     return {
@@ -306,8 +320,13 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--local",
-        action="store_true",
-        help="Run one worker locally instead of submitting Slurm jobs",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Run one worker locally instead of submitting Slurm jobs. By default, "
+            "run locally when the installation was set up with --local or Slurm "
+            "is unavailable"
+        ),
     )
     parser.add_argument(
         "--no-submit",
@@ -394,6 +413,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     record = site.installation_record()
     if record.get("mode") in {"shared", "branch"} and not record.get("ready") and not args.repair:
         raise SystemExit("The installation is undergoing setup or maintenance")
+    if args.local is None:
+        args.local = _default_local(args, record)
     try:
         selection = core_selection(args, apply_planner_defaults=not args.resume)
     except ValueError as error:
