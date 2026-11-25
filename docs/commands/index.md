@@ -9,8 +9,14 @@ behavior behind it.
 `nro help` prints task guides and a list of the installed commands. `nro help
 TOPIC` explains a common workflow. For the syntax of one command, run `nro help
 --command COMMAND` or `nro COMMAND --help`. Every command accepts `-h` and
-`--help`. `nro --version` prints the package version of the selected
-installation.
+`--help`. `nro --version` prints the version of the selected installation.
+Only code that matches a published release prints a bare version such as
+`0.49.0`. A Git checkout with other changes prints the newest release it
+contains, the number of commits since that release, and the current commit,
+as in `0.49.0+dev.3.g4f90215`. `.uncommitted` is appended when tracked files
+have uncommitted changes. An installed snapshot that matches no recorded
+release prints `unreleased+source.` followed by the start of its source
+digest.
 
 Each public executable module in `nro/bin` becomes a command. With the correct
 interpreter, `python -m nro.bin.COMMAND` is equivalent to `nro COMMAND`. Other
