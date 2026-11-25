@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import json
 import tomllib
-from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -56,14 +56,75 @@ def test_version_reports_installed_distribution_without_site_loading(
         cli.main([flag])
 
     assert error.value.code == 0
-    assert capsys.readouterr().out.strip() == f"nro {version('nro')}"
+    assert capsys.readouterr().out.strip() == f"nro {cli.application_version()}"
 
 
-def test_version_reports_verified_application_source(tmp_path, monkeypatch) -> None:
+def test_version_reports_recorded_release_for_matching_snapshot(tmp_path, monkeypatch) -> None:
+    import nro.site.configuration as site
+
+    digest = "a" * 64
+    release = {"application_digest": digest, "release": {"version": "2.3.4"}}
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "2.3.4"\n')
     monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(tmp_path))
-
+    monkeypatch.setenv("NRO_EXECUTION_SOURCE_DIGEST", digest)
+    monkeypatch.setattr(site, "installation_record", lambda: release)
     assert cli.application_version() == "2.3.4"
+
+    def unavailable():
+        raise OSError("no site")
+
+    monkeypatch.setattr(site, "installation_record", lambda: {"application_digest": digest})
+    monkeypatch.setattr(site, "settings", unavailable)
+    assert cli.application_version() == "unreleased+source.aaaaaaaaaaaa"
+
+    implementation = tmp_path / "implementation.json"
+    implementation.write_text(
+        json.dumps({"source_digest": digest, "release": {"version": "2.3.4"}})
+    )
+    monkeypatch.setattr(site, "settings", lambda: ({"registry": str(tmp_path)}, None))
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_implementation.implementation_path",
+        lambda _control: implementation,
+    )
+    assert cli.application_version() == "2.3.4"
+    monkeypatch.setattr(site, "settings", unavailable)
+    monkeypatch.delenv("NRO_EXECUTION_SOURCE_DIGEST")
+    assert cli.application_version() == "unreleased"
+
+
+def test_version_describes_checkout_relative_to_contained_release(tmp_path) -> None:
+    import subprocess
+
+    from nro.versioning import _checkout_version
+
+    def git(*arguments: str) -> str:
+        return subprocess.run(
+            ["git", *arguments], cwd=tmp_path, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    def describe() -> str:
+        _checkout_version.cache_clear()
+        return _checkout_version(tmp_path)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.com")
+    assert describe() == "unreleased"
+    git("commit", "-q", "--allow-empty", "-m", "base")
+    git("checkout", "-q", "-b", "dev")
+    (tmp_path / "a").write_text("1")
+    git("add", "a")
+    git("commit", "-q", "-m", "one")
+    assert describe() == "unreleased"
+    git("checkout", "-q", "main")
+    git("merge", "-q", "--no-ff", "-m", "release", "dev")
+    git("tag", "-a", "v1.2.0", "-m", "nro 1.2.0")
+    git("checkout", "-q", "dev")
+    assert describe() == "1.2.0"
+    (tmp_path / "a").write_text("2")
+    assert describe() == f"1.2.0+dev.0.g{git('rev-parse', '--short=7', 'HEAD')}.uncommitted"
+    git("commit", "-q", "-am", "two")
+    assert describe() == f"1.2.0+dev.1.g{git('rev-parse', '--short=7', 'HEAD')}"
 
 
 def test_help_lists_task_guides_and_installed_commands(capsys) -> None:
