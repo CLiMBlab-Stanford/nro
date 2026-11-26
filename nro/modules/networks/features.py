@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -11,6 +12,8 @@ from scipy import sparse
 from nro.engine.io import atomic_output_path
 
 from .config import FeatureReductionConfig, ModuleConfig
+
+LOG = logging.getLogger(__name__)
 
 _ROW_BLOCK_SIZE = 4096
 
@@ -52,6 +55,27 @@ def dynconn_features(path: Path, domain: str) -> tuple[np.ndarray, np.ndarray, t
     if not np.any(active):
         raise ValueError(f"Dynamic-connectivity input has no varying spatial locations: {path}")
     return matrix, active, counts
+
+
+def _randomized_svd_with_fallback(randomized_svd, matrix, **options):
+    """Run a randomized SVD, retrying with LAPACK's gesvd if gesdd fails.
+
+    The default gesdd driver can fail to converge on valid, rank-deficient
+    input on some CPUs; gesvd is slower but converges on the same subspace.
+    Successful gesdd results are unchanged. Returns the left singular vectors,
+    the singular values, and the driver that produced them.
+    """
+    try:
+        left, singular, _right = randomized_svd(
+            matrix, flip_sign=False, svd_lapack_driver="gesdd", **options
+        )
+        return left, singular, "gesdd"
+    except np.linalg.LinAlgError:
+        LOG.warning("Randomized SVD did not converge with gesdd; retrying with gesvd")
+    left, singular, _right = randomized_svd(
+        matrix, flip_sign=False, svd_lapack_driver="gesvd", **options
+    )
+    return left, singular, "gesvd"
 
 
 def reduce_features(
@@ -106,19 +130,20 @@ def reduce_features(
             method = "none"
             retained = 1.0
             effective_seed = None
+            lapack_driver = None
         else:
             effective_seed = (
                 int(np.random.SeedSequence().generate_state(1)[0])
                 if config.random_seed is None
                 else config.random_seed
             )
-            left, singular, _right = randomized_svd(
+            left, singular, lapack_driver = _randomized_svd_with_fallback(
+                randomized_svd,
                 selected,
                 n_components=target,
                 n_oversamples=config.oversampling,
                 n_iter=config.power_iterations,
                 random_state=effective_seed,
-                flip_sign=False,
             )
             reduced = left * singular[np.newaxis, :]
             method = "randomized_svd"
@@ -148,6 +173,7 @@ def reduce_features(
             "power_iterations": int(config.power_iterations),
             "random_seed": effective_seed,
             "retained_variance_fraction": retained,
+            "svd_lapack_driver": lapack_driver,
         }
     finally:
         if temporary is not None:

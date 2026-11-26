@@ -48,6 +48,10 @@ nro uses the rank declared in the dynconn manifest and does not treat the extra
 synthetic frame as an independent dimension. The publication manifest records
 the source, input and fitted dimensions, seed, and retained variance.
 
+The SVD uses LAPACK's `gesdd` driver. On some CPUs `gesdd` fails to converge on
+valid, rank-deficient input; nro then repeats the SVD with the slower `gesvd`
+driver and records `svd_lapack_driver` in the feature-reduction summary.
+
 ## ICA
 
 scikit-learn FastICA fits the reduced feature matrix with unit-variance
