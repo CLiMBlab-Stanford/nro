@@ -228,6 +228,37 @@ def test_low_rank_dynconn_discards_the_extra_synthetic_frame(tmp_path: Path) -> 
     assert summary["source_dimensions"] == 5
     assert summary["informative_dimensions"] == 4
     assert summary["fitted_dimensions"] == 4
+    assert summary["svd_lapack_driver"] == "gesdd"
+
+
+def test_feature_reduction_retries_with_gesvd_when_gesdd_fails(tmp_path: Path, monkeypatch) -> None:
+    import sklearn.utils.extmath as extmath
+
+    original = extmath.randomized_svd
+    drivers = []
+
+    def gesdd_fails(*args, svd_lapack_driver="gesdd", **kwargs):
+        drivers.append(svd_lapack_driver)
+        if svd_lapack_driver == "gesdd":
+            raise np.linalg.LinAlgError("SVD did not converge")
+        return original(*args, svd_lapack_driver=svd_lapack_driver, **kwargs)
+
+    monkeypatch.setattr(extmath, "randomized_svd", gesdd_fails)
+    features = np.random.default_rng(3).normal(size=(12, 5)).astype(np.float32)
+    output = tmp_path / "features.npy"
+
+    summary = reduce_features(
+        features,
+        np.ones(12, dtype=bool),
+        FeatureReductionConfig(maximum_dimensions=1000, random_seed=1),
+        output,
+        informative_dimensions=4,
+    )
+
+    assert drivers == ["gesdd", "gesvd"]
+    assert summary["svd_lapack_driver"] == "gesvd"
+    assert np.load(output).shape == (12, 4)
+    assert np.all(np.isfinite(np.load(output)))
 
 
 def test_dynconn_network_module_publishes_anatomically_indexed_maps(
