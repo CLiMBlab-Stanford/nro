@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nro.bin.purge import _excluded_selection
+from nro.bin.purge import _excluded_selection, _markup_exclusion_participants
 from nro.bin.purge import main as purge_main
 from nro.definitions.store import ConfigStore
 from nro.engine.cli import page_text
@@ -777,3 +777,64 @@ def test_purge_plan_uses_pager_for_interactive_output(monkeypatch) -> None:
     assert calls == [
         (["/usr/bin/less", "-R", "-S"], {"input": "planned paths\n", "text": True, "check": False})
     ]
+
+
+def test_markup_exclusion_participants_lists_only_participants_with_exclusions(
+    monkeypatch, tmp_path: Path
+) -> None:
+    definitions = tmp_path / "definitions"
+    _write(
+        definitions / "markup" / "main_markup.yml",
+        "demo:\n  '01':\n    exclude:\n      - ses-1/func/bad_bold.nii.gz\n"
+        "  '02':\n    lesion: true\n",
+    )
+    _write(
+        definitions / "markup" / "alternative_markup.yml",
+        "other:\n  '03':\n    exclude:\n      - func/x_bold.nii.gz\n",
+    )
+    monkeypatch.setattr("nro.definitions.markup.definitions_roots", lambda: (definitions,))
+
+    assert _markup_exclusion_participants() == {("demo", "01"), ("other", "03")}
+
+
+def test_excluded_selection_reads_lineage_configurations_and_keeps_outside_consumers(
+    monkeypatch, tmp_path: Path
+) -> None:
+    bids = tmp_path / "bids"
+    definitions = tmp_path / "definitions"
+    excluded = _write(bids / "demo" / "sub-01" / "ses-1" / "func" / "bad_bold.nii.gz")
+    _write(
+        definitions / "markup" / "main_markup.yml",
+        "demo:\n  '01':\n    exclude:\n      - ses-1/func/bad_bold.nii.gz\n",
+    )
+    monkeypatch.setattr("nro.definitions.markup.definitions_roots", lambda: (definitions,))
+    rows = [
+        dict(
+            id=1,
+            project="demo",
+            participant="01",
+            module="func",
+            module_lineage_id=7,
+            directory_label="main-deadbeef",
+            workflow_ids="main",
+            entities_json="{}",
+            input_paths_json=json.dumps([str(excluded)]),
+        )
+    ]
+    selection = SimpleNamespace(
+        projects=(),
+        participants=(),
+        modules=(),
+        workflows=(),
+        lineages=(),
+        work_item_entities={},
+    )
+
+    # Work item 9 consumes 1 but belongs to a participant outside the snapshot.
+    assert _excluded_selection(
+        rows,
+        ((9, 1),),
+        selection,
+        bids_root=bids,
+        configurations={"7": "markup: main\n"},
+    ) == {1, 9}

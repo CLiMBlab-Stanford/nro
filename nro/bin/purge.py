@@ -84,18 +84,55 @@ def _descendant_closure(
     return selected
 
 
-def _excluded_work_item_ids(rows: Iterable[dict], *, bids_root: Path) -> set[int]:
-    """Identify work items whose recorded raw inputs are now excluded by markup."""
+def _markup_exclusion_participants() -> set[tuple[str, str]]:
+    """Return the (project, participant) pairs that any markup document excludes paths for."""
+    from nro.definitions.markup import MarkupStore
+
+    store = MarkupStore()
+    identifiers = {"main"} | {
+        path.name.removesuffix("_markup.yml")
+        for root in store.roots
+        for path in (root / "markup").glob("*_markup.yml")
+    }
+    return {
+        (str(project), str(participant))
+        for identifier in sorted(identifiers)
+        for project, participants in store.load(identifier).items()
+        for participant, record in participants.items()
+        if record.get("exclude")
+    }
+
+
+def _excluded_work_item_ids(
+    rows: Iterable[dict],
+    *,
+    bids_root: Path,
+    configurations: dict[str, str] | None = None,
+) -> set[int]:
+    """Identify work items whose recorded raw inputs are now excluded by markup.
+
+    `configurations` maps `module_lineage_id` to resolved configuration YAML.
+    Without it, each row must carry `resolved_configuration_yaml`.
+    """
     from nro.definitions.markup import MarkupStore
 
     store = MarkupStore()
     selections = {}
+    markup_ids: dict[str, object] = {}
     excluded = set()
     for row in rows:
-        values = yaml.safe_load(str(row["resolved_configuration_yaml"])) or {}
-        if not isinstance(values, dict):
-            raise ValueError("Recorded module configuration is not a mapping")
-        markup_id = values.get("markup")
+        lineage = str(row.get("module_lineage_id"))
+        if configurations is None or lineage not in markup_ids:
+            text = (
+                configurations[lineage]
+                if configurations is not None
+                else row["resolved_configuration_yaml"]
+            )
+            values = yaml.safe_load(str(text)) or {}
+            if not isinstance(values, dict):
+                raise ValueError("Recorded module configuration is not a mapping")
+            markup_ids[lineage] = values.get("markup")
+        markup_id = markup_ids[lineage]
         if markup_id is None:
             continue
         key = (str(markup_id), str(row["project"]), str(row["participant"]))
@@ -127,10 +164,20 @@ def _matches_selection(row: dict, selection) -> bool:
     )
 
 
-def _excluded_selection(rows: list[dict], dependencies, selection, *, bids_root: Path) -> set[int]:
+def _excluded_selection(
+    rows: list[dict],
+    dependencies,
+    selection,
+    *,
+    bids_root: Path,
+    configurations: dict[str, str] | None = None,
+) -> set[int]:
     """Select excluded-source work and force its downstream closure into the purge."""
     return _closure_selection(
-        rows, dependencies, selection, _excluded_work_item_ids(rows, bids_root=bids_root)
+        rows,
+        dependencies,
+        selection,
+        _excluded_work_item_ids(rows, bids_root=bids_root, configurations=configurations),
     )
 
 
@@ -518,6 +565,11 @@ def _branch_purge(
             "Branch purge uses the shared WORK root and maps output paths automatically"
         )
     control = Path(values["registry"])
+    # Only participants with markup exclusions can own excluded-source work, so
+    # --excluded reads just their rows plus the dependency edges.
+    excluded_participants = (
+        sorted(map(list, _markup_exclusion_participants())) if args.excluded else None
+    )
     snapshot = maintenance(
         control,
         bids_root,
@@ -525,6 +577,7 @@ def _branch_purge(
         operation="purge_snapshot",
         include_scientific_inputs=args.excluded,
         selection_only=True,
+        participants=excluded_participants,
     )
     if defect_roots is not None:
         excluded_ids = _closure_selection(
@@ -539,18 +592,24 @@ def _branch_purge(
             snapshot.get("dependencies", ()),
             selection,
             bids_root=bids_root,
+            configurations=snapshot.get("lineage_configurations"),
         )
     else:
         excluded_ids = None
-    selected_ids = {
-        int(row["id"])
-        for row in snapshot["rows"]
-        if (
-            int(row["id"]) in excluded_ids
-            if excluded_ids is not None
-            else _matches_selection(row, selection)
-        )
-    }
+    if args.excluded:
+        # Downstream consumers may lie outside the snapshot's participants; the
+        # second snapshot reads them and keeps only work this branch owns.
+        selected_ids = set(excluded_ids)
+    else:
+        selected_ids = {
+            int(row["id"])
+            for row in snapshot["rows"]
+            if (
+                int(row["id"]) in excluded_ids
+                if excluded_ids is not None
+                else _matches_selection(row, selection)
+            )
+        }
     snapshot = (
         maintenance(
             control,

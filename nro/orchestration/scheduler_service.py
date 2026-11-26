@@ -1497,6 +1497,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             work_item_ids={int(value) for value in message["work_item_ids"]}
             if message.get("work_item_ids") is not None
             else None,
+            participants=message.get("participants"),
             selection_only=bool(message.get("selection_only", False)),
         )
     elif message["operation"] == "purge":
