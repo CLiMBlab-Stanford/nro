@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from nro.definitions.store import fingerprint
 from nro.orchestration.branch_store import BranchStore
@@ -126,9 +126,18 @@ def snapshot(
     site_values: dict,
     include_scientific_inputs: bool = False,
     work_item_ids: set[int] | None = None,
+    participants: Iterable[Iterable[str]] | None = None,
     selection_only: bool = False,
 ) -> dict:
-    """Return owned work items and the facts needed to select safe deletions."""
+    """Return owned work items and the facts needed to select safe deletions.
+
+    `participants` limits the rows to the given (project, participant) pairs.
+    The dependency edges are then not limited, so that callers can follow
+    downstream consumers outside those participants and read them with a later
+    `work_item_ids` snapshot. With `include_scientific_inputs`, the resolved
+    configuration of each lineage is returned once under
+    `lineage_configurations`, keyed by `module_lineage_id`.
+    """
     topology = BranchStore(registry.paths.control).read().topology
     name = topology.require_checkout(checkout)
     owner = topology.records[name].registry_id
@@ -139,11 +148,24 @@ def snapshot(
         selected_ids = None if work_item_ids is None else {int(value) for value in work_item_ids}
         where = ""
         parameters: tuple[str, ...] = ()
+        pairs = (
+            None
+            if participants is None
+            else {(str(project), str(participant)) for project, participant in participants}
+        )
         if selected_ids is not None:
             if not selected_ids:
                 return {"rows": [], "dependencies": [], "branch": name}
             where = f"WHERE item.id IN ({JSON_VALUES})"
             parameters = (json_values(sorted(selected_ids)),)
+        elif pairs is not None:
+            if not pairs:
+                return {"rows": [], "dependencies": [], "branch": name}
+            where = f"WHERE item.project IN ({JSON_VALUES}) AND item.participant IN ({JSON_VALUES})"
+            parameters = (
+                json_values(sorted({project for project, _ in pairs})),
+                json_values(sorted({participant for _, participant in pairs})),
+            )
         report = [
             dict(row)
             for row in db.execute(
@@ -184,6 +206,8 @@ def snapshot(
                 parameters,
             )
         ]
+        if pairs is not None:
+            report = [row for row in report if (row["project"], row["participant"]) in pairs]
         report_ids = {int(row["id"]) for row in report}
         execution = {
             row["work_item_id"]: dict(row)
@@ -204,16 +228,14 @@ def snapshot(
             )
             if row["registry_id"] == owner
         }
-        scientific = {}
-        if include_scientific_inputs and report_ids:
-            scientific = {
-                int(row["id"]): dict(row)
+        configurations = {}
+        if include_scientific_inputs and report:
+            lineage_ids = {int(row["module_lineage_id"]) for row in report}
+            configurations = {
+                str(row["id"]): str(row["resolved_yaml"])
                 for row in db.execute(
-                    f"""SELECT item.id,item.input_paths_json,lineage.resolved_yaml
-                        FROM work_items item
-                        JOIN module_lineages lineage ON lineage.id=item.module_lineage_id
-                        WHERE item.id IN ({JSON_VALUES})""",
-                    (json_values(sorted(report_ids)),),
+                    f"SELECT id,resolved_yaml FROM module_lineages WHERE id IN ({JSON_VALUES})",
+                    (json_values(sorted(lineage_ids)),),
                 )
             }
         dependency_query = "SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies"
@@ -250,19 +272,18 @@ def snapshot(
                 execution_context=context.as_dict(),
                 purge_token=token(row, encoded),
             )
-        if include_scientific_inputs:
-            payload.update(
-                input_paths_json=scientific[int(row["id"])]["input_paths_json"],
-                resolved_configuration_yaml=scientific[int(row["id"])]["resolved_yaml"],
-            )
         rows.append(payload)
-    owned_ids = {int(row["id"]) for row in rows}
-    dependencies = [
-        [work_item_id, upstream_id]
-        for work_item_id, upstream_id in dependencies
-        if work_item_id in owned_ids and upstream_id in owned_ids
-    ]
-    return {"rows": rows, "dependencies": dependencies, "branch": name}
+    if pairs is None:
+        owned_ids = {int(row["id"]) for row in rows}
+        dependencies = [
+            [work_item_id, upstream_id]
+            for work_item_id, upstream_id in dependencies
+            if work_item_id in owned_ids and upstream_id in owned_ids
+        ]
+    result = {"rows": rows, "dependencies": dependencies, "branch": name}
+    if include_scientific_inputs:
+        result["lineage_configurations"] = configurations
+    return result
 
 
 def purge(

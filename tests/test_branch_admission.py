@@ -317,7 +317,9 @@ def test_branch_purge_removes_receipts_and_empty_lineage_directories(
     )
     scientific_row = next(item for item in scientific_view["rows"] if item["module"] == spec.module)
     assert isinstance(json.loads(scientific_row["input_paths_json"]), list)
-    assert "markup:" in scientific_row["resolved_configuration_yaml"]
+    assert "resolved_configuration_yaml" not in scientific_row
+    lineage = str(scientific_row["module_lineage_id"])
+    assert "markup:" in scientific_view["lineage_configurations"][lineage]
     compact_view = snapshot(
         registry,
         checkout=checkout,
@@ -338,6 +340,22 @@ def test_branch_purge_removes_receipts_and_empty_lineage_directories(
     )
     assert [int(item["id"]) for item in selected_view["rows"]] == [int(row["id"])]
     assert selected_view["dependencies"] == []
+    participant_view = snapshot(
+        registry,
+        checkout=checkout,
+        site_values=site_values,
+        participants=[(row["project"], row["participant"])],
+        selection_only=True,
+    )
+    assert int(row["id"]) in {int(item["id"]) for item in participant_view["rows"]}
+    assert {item["participant"] for item in participant_view["rows"]} == {row["participant"]}
+    other_view = snapshot(
+        registry,
+        checkout=checkout,
+        site_values=site_values,
+        participants=[(row["project"], "no-such-participant")],
+    )
+    assert other_view["rows"] == []
     context = ExecutionContext.from_dict(row["execution_context"])
     facade = SimpleNamespace(
         paths=SimpleNamespace(
