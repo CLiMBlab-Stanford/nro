@@ -245,6 +245,8 @@ def load_analysis(source: StudySource, analysis: str) -> LoadedAnalysis:
     if code is None:
         raise ManifestError(f"Analysis {source.study}/{analysis} has no analysis.py")
     check_entry(code, manifest.entry)
+    if manifest.viz is not None and source.read_text(f"analyses/{analysis}/{manifest.viz}") is None:
+        raise ManifestError(f"Analysis {source.study}/{analysis} has no viewer page {manifest.viz}")
     return LoadedAnalysis(source, study, manifest)
 
 

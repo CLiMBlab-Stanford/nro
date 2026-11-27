@@ -495,7 +495,12 @@ class Catalog:
             return self._layers[identifier]
 
     def _completed(self) -> Iterable[dict]:
-        return (row for row in self.rows if row.get("status") in {"Success", "success"})
+        # Participant views ignore project-scope items, which have no participant.
+        return (
+            row
+            for row in self.rows
+            if row.get("status") in {"Success", "success"} and row.get("participant")
+        )
 
 
 class Catalogs:

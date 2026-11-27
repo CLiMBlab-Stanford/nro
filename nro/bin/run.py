@@ -19,6 +19,7 @@ from nro.engine.cli import (
     matches_work_item_selectors,
 )
 from nro.orchestration.catalog import MODULES, normalize_module, terminal_modules
+from nro.orchestration.contracts import is_project_scope, subject_label
 from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.planner import Planner, PlanningResult, RegisteredTarget
@@ -76,7 +77,7 @@ def _report_unavailable(plan: PlanningResult) -> None:
     )
     for item in records:
         print(
-            f"  {item['project']}/sub-{item['participant']} {item['module']}: {item['reason']}",
+            f"  {item['project']}/{subject_label(item['participant'])} {item['module']}: {item['reason']}",
             file=sys.stderr,
         )
 
@@ -201,7 +202,9 @@ def _resume_plan_selection(selection: CoreSelection, rows: list[dict]) -> CoreSe
     return replace(
         selection,
         projects=tuple(dict.fromkeys(str(row["project"]) for row in rows)),
-        participants=tuple(dict.fromkeys(str(row["participant"]) for row in rows)),
+        participants=tuple(
+            dict.fromkeys(str(row["participant"]) for row in rows if row["participant"])
+        ),
         modules=tuple(dict.fromkeys(str(row["module"]) for row in rows)),
         workflows=workflows,
         runs={},
@@ -248,6 +251,8 @@ def _resume_targets(
             entities=json.loads(row["entities_json"]),
         )
         for row in rows
+        # Project-scope work is planned with its request, not per participant.
+        if not is_project_scope(row)
         for workflow in _resume_workflows(row, requested=requested_workflows)
     )
 
@@ -643,7 +648,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 )
                 for item in unavailable:
                     print(
-                        f"  {item['project']}/sub-{item['participant']} "
+                        f"  {item['project']}/{subject_label(item['participant'])} "
                         f"{item['module']}: {item['reason']}",
                         file=sys.stderr,
                     )
@@ -773,7 +778,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         unavailable = _unavailable_records(plan)
         if unavailable:
             details = "; ".join(
-                f"{item['project']}/sub-{item['participant']} {item['module']}: {item['reason']}"
+                f"{item['project']}/{subject_label(item['participant'])} {item['module']}: {item['reason']}"
                 for item in unavailable
             )
             raise SystemExit(f"No requested work is available: {details}")

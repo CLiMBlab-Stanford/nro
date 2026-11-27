@@ -10,12 +10,12 @@ import keyword
 import re
 import string
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import yaml
 
 SCOPES = ("subject", "run", "project", "study")
-SUPPORTED_SCOPES = ("subject", "run")
+SUPPORTED_SCOPES = ("subject", "run", "project")
 RESOURCE_CLASSES = ("small", "medium", "large")
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _ANALYSIS_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -28,9 +28,13 @@ _MANIFEST_KEYS = {
     "outputs",
     "parameters",
     "resources",
+    "participants",
+    "viz",
 }
 _INPUT_KEYS = {"from", "workflow", "config", "select", "many", "min", "max", "optional", "path"}
 _RESERVED_PLACEHOLDERS = {"project", "participant", "session", "stem"}
+PROJECT_PARAMETERS = ("participants", "excluded_participants")
+ANALYSIS_SOURCE = "analysis:"
 
 
 class ManifestError(ValueError):
@@ -67,9 +71,45 @@ class InputSpec:
     @property
     def module(self) -> str | None:
         """Return the upstream module for a ``from: MODULE`` input."""
-        if self.source == "raw" or self.source.startswith("analysis:"):
+        if self.source == "raw" or self.source.startswith(ANALYSIS_SOURCE):
             return None
         return self.source
+
+    @property
+    def analysis(self) -> str | None:
+        """Return the upstream analysis for a ``from: analysis:NAME`` input."""
+        if self.source.startswith(ANALYSIS_SOURCE):
+            return self.source[len(ANALYSIS_SOURCE) :]
+        return None
+
+
+@dataclass(frozen=True)
+class ParticipantSelection:
+    """The participants a project-scope analysis reads, before expansion.
+
+    ``match`` is an nro identifier pattern (exact, glob, or ``re:``). Planning
+    expands it against each project's BIDS participants and records the
+    resulting list in the work item's signature. ``pending`` decides what a
+    participant whose upstream work is not fresh does: ``wait`` holds the whole
+    work item, and ``exclude`` leaves the participant out.
+    """
+
+    match: str = "*"
+    exclude: tuple[str, ...] = ()
+    pending: str = "wait"
+
+    def select(self, available: Sequence[str]) -> tuple[str, ...]:
+        """Return the matching participants of ``available``, sorted."""
+        from nro.engine.patterns import matches_any
+
+        excluded = set(self.exclude)
+        return tuple(
+            sorted(
+                value
+                for value in available
+                if matches_any(value, (self.match,)) and value not in excluded
+            )
+        )
 
 
 @dataclass(frozen=True)
@@ -98,6 +138,8 @@ class Manifest:
     memory_gb: int | None
     digest: str
     warnings: tuple[str, ...] = field(default=())
+    participants: ParticipantSelection | None = None
+    viz: str | None = None
 
     def combinations(self) -> tuple[tuple[dict[str, Any], dict[str, str]], ...]:
         """Return (parameters, labels) for every expanded parameter combination."""
@@ -168,12 +210,17 @@ def _input(name: str, value: object, *, parameters: Mapping[str, Any]) -> InputS
     source = value.get("from")
     if not isinstance(source, str) or not source:
         raise ManifestError(f"{where}.from is required")
-    if source.startswith("analysis:"):
-        raise ManifestError(
-            f"{where}: analyses read only module outputs and raw files; "
-            "do sequential steps inside one analysis and write each result to an output slot"
-        )
-    if source != "raw":
+    upstream_analysis = None
+    if source.startswith(ANALYSIS_SOURCE):
+        upstream_analysis = source[len(ANALYSIS_SOURCE) :]
+        if not _ANALYSIS_NAME.match(upstream_analysis):
+            raise ManifestError(
+                f"{where}.from must name an analysis of the same study, as analysis:NAME"
+            )
+        for key in ("workflow", "config", "path"):
+            if value.get(key) is not None:
+                raise ManifestError(f"{where}: from: analysis:NAME takes no {key}")
+    elif source != "raw":
         from nro.modules import MODULE_NAMES
 
         if source not in MODULE_NAMES:
@@ -190,7 +237,7 @@ def _input(name: str, value: object, *, parameters: Mapping[str, Any]) -> InputS
     if source == "raw":
         if workflow is not None or config is not None:
             raise ManifestError(f"{where}: from: raw takes neither workflow nor config")
-    else:
+    elif upstream_analysis is None:
         if value.get("path") is not None:
             raise ManifestError(f"{where}.path is only valid with from: raw")
         if workflow is None and config is None:
@@ -292,6 +339,8 @@ def parse_manifest(text: str, *, analysis: str) -> Manifest:
             raise ManifestError(f"Parameter name {name!r} must be an identifier")
         if name in _RESERVED_PLACEHOLDERS:
             raise ManifestError(f"Parameter name {name!r} is reserved for work-item entities")
+        if scope == "project" and name in PROJECT_PARAMETERS:
+            raise ManifestError(f"Parameter name {name!r} is reserved in project scope")
         literal = item.get("expand") if isinstance(item, dict) and set(item) == {"expand"} else None
         if (
             isinstance(literal, list)
@@ -319,6 +368,9 @@ def parse_manifest(text: str, *, analysis: str) -> Manifest:
         if not isinstance(name, str) or not _NAME.match(name):
             raise ManifestError(f"Input name {name!r} must be an identifier")
         inputs[name] = _input(name, item, parameters=parameters)
+        if inputs[name].analysis == analysis:
+            raise ManifestError(f"inputs.{name} reads the analysis's own outputs")
+    participants = _participants(value.get("participants"), scope=scope)
 
     raw_outputs = value.get("outputs")
     if not isinstance(raw_outputs, dict) or not raw_outputs:
@@ -335,6 +387,11 @@ def parse_manifest(text: str, *, analysis: str) -> Manifest:
         placeholders = _placeholders(pattern, where=where)
         for name in placeholders:
             if name in _RESERVED_PLACEHOLDERS or name in _RUN_PLACEHOLDERS:
+                if scope == "project" and name != "project":
+                    raise ManifestError(
+                        f"{where} uses {{{name}}}, but a project-scope work item "
+                        "covers many participants"
+                    )
                 if scope == "subject" and name not in {"project", "participant"}:
                     raise ManifestError(f"{where} uses run placeholder {{{name}}} in subject scope")
                 continue
@@ -384,6 +441,55 @@ def parse_manifest(text: str, *, analysis: str) -> Manifest:
         memory_gb=memory_gb,
         digest=digest,
         warnings=tuple(warnings),
+        participants=participants,
+        viz=_viz(value.get("viz")),
+    )
+
+
+def _viz(value: object) -> str | None:
+    """Validate the viewer page path, which must lie in a subdirectory of the analysis."""
+    if value is None:
+        return None
+    parts = value.split("/") if isinstance(value, str) else []
+    if (
+        len(parts) < 2
+        or not value.endswith(".html")
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise ManifestError(
+            "viz must name an HTML page in a subdirectory of the analysis, such as viz/index.html"
+        )
+    return value
+
+
+def _participants(value: object, *, scope: str) -> ParticipantSelection | None:
+    if value is None:
+        return ParticipantSelection() if scope == "project" else None
+    if scope != "project":
+        raise ManifestError("participants applies only to scope: project")
+    if not isinstance(value, dict) or set(value) - {"match", "exclude", "pending"}:
+        raise ManifestError("participants accepts match, exclude, and pending")
+    pending = value.get("pending", "wait")
+    if pending not in {"wait", "exclude"}:
+        raise ManifestError("participants.pending must be wait or exclude")
+    match = value.get("match", "*")
+    if not isinstance(match, str) or not match:
+        raise ManifestError("participants.match must be a participant pattern")
+    from nro.engine.patterns import validate_patterns
+
+    try:
+        validate_patterns((match.removeprefix("sub-"),))
+    except ValueError as error:
+        raise ManifestError(f"participants.match: {error}") from error
+    exclude = value.get("exclude") or []
+    if not isinstance(exclude, list) or not all(
+        isinstance(item, (str, int)) and not isinstance(item, bool) for item in exclude
+    ):
+        raise ManifestError("participants.exclude must be a list of participant IDs")
+    return ParticipantSelection(
+        match.removeprefix("sub-"),
+        tuple(str(item).removeprefix("sub-") for item in exclude),
+        pending,
     )
 
 

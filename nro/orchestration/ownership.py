@@ -264,10 +264,13 @@ def lineage_root(project_root: Path, configuration_class: str, directory_label: 
 def analysis_ownership_root(output_root: Path) -> Path:
     """Return the per-project results directory that owns a study analysis's receipts.
 
-    Analysis work items write to ``.../analyses/NAME/project-P/sub-S``, outside
-    any project's derivatives, so their records live in ``project-P``.
+    Participant work items write to ``.../analyses/NAME/project-P/sub-S`` and
+    project-scope work items to ``.../analyses/NAME/project-P``, outside any
+    project's derivatives, so their records live in ``project-P``.
     """
-    root = Path(output_root).parent
+    root = Path(output_root)
+    if not root.name.startswith("project-"):
+        root = root.parent
     if not root.name.startswith("project-"):
         raise ValueError(f"Study-analysis output root is not below a project directory: {root}")
     return root
@@ -750,36 +753,7 @@ def read_ownership_records(
 
         for target, paths in zip(targets, receipt_paths, strict=True):
             read_lineage(*target, receipts(paths))
-    work_items, chained = _without_chained_analyses(work_items)
-    errors.extend(chained)
     return list(lineages.values()), work_items, errors
-
-
-def _without_chained_analyses(
-    work_items: list[tuple[dict, Path]],
-) -> tuple[list[tuple[dict, Path]], list[str]]:
-    """Drop analysis receipts that depend on another analysis.
-
-    Study analyses read only module outputs and source BIDS. Sequential steps
-    belong inside one analysis, so a recovered analysis never depends on one.
-    """
-    analyses = {
-        str(record["work_item_key"])
-        for record, _path in work_items
-        if record["module"] == ANALYSES_CLASS
-    }
-    kept, errors = [], []
-    for record, path in work_items:
-        chained = sorted(
-            str(value)
-            for value in record["artifact_contract"].get("dependencies", ())
-            if str(value) in analyses
-        )
-        if record["module"] == ANALYSES_CLASS and chained:
-            errors.append(f"{path}: study analyses cannot depend on other analyses: {chained}")
-        else:
-            kept.append((record, path))
-    return kept, errors
 
 
 def complete_ownership_records(

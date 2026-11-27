@@ -111,8 +111,9 @@ def participants(manifests: Iterable[ManifestRecord]) -> int:
     """Return the number of distinct project and participant pairs among manifests."""
     return len(
         {
-            (record.entities.get("project", ""), record.entities.get("participant", ""))
+            (record.entities.get("project", ""), record.entities["participant"])
             for record in manifests
+            if record.entities.get("participant")
         }
     )
 

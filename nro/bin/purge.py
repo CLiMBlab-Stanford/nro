@@ -22,6 +22,7 @@ from nro.orchestration.artifact_ownership import (
     work_item_paths as _work_item_paths,
 )
 from nro.orchestration.catalog import MODULES, normalize_module
+from nro.orchestration.contracts import is_project_scope, subject_label
 from nro.orchestration.ownership import (
     remove_empty_ownership_root,
 )
@@ -133,7 +134,8 @@ def _excluded_work_item_ids(
                 raise ValueError("Recorded module configuration is not a mapping")
             markup_ids[lineage] = values.get("markup")
         markup_id = markup_ids[lineage]
-        if markup_id is None:
+        # A project-scope item reads no raw files; it is purged as a consumer.
+        if markup_id is None or is_project_scope(row):
             continue
         key = (str(markup_id), str(row["project"]), str(row["participant"]))
         if key not in selections:
@@ -275,7 +277,7 @@ def _active_work_items(registry: Registry, work_item_ids: set[int]) -> list[dict
 
 def _active_error(active: list[dict]) -> str:
     rendered = ", ".join(
-        f"{work_item['project']}:{work_item['module']}:sub-{work_item['participant']}"
+        f"{work_item['project']}:{work_item['module']}:{subject_label(work_item['participant'])}"
         for work_item in active
     )
     return f"Refusing to purge active derivative attempt(s): {rendered}"

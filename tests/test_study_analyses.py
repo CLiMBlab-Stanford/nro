@@ -182,7 +182,10 @@ def test_expansion_labels_and_literal_lists():
         (("workflow: main", "workflow: main\n    config: main"), "both workflow and config"),
         (("from: contrasts", "from: lineage"), "unknown module"),
         (("scope: subject", "scope: study"), "not supported yet"),
-        (("from: contrasts", "from: analysis:s1/other"), "inside one analysis"),
+        (("from: contrasts", "from: analysis:s1/other"), "same study, as analysis:NAME"),
+        (("from: contrasts", "from: analysis:other"), "takes no workflow"),
+        (("from: contrasts\n    workflow: main", "from: analysis:similarity"), "own outputs"),
+        (("scope: subject", "scope: subject\nparticipants: {match: '*'}"), "only to scope"),
         (("[S-N, W-N]", "[[S, N]]"), "non-scalar"),
     ],
 )
@@ -502,9 +505,13 @@ class _StubPlanner:
 
 class _StubRegistry:
     def register_unbound_lineage(self, configuration_class, config_id, resolved):
+        import hashlib
+
         from nro.orchestration.workflow_registry import UnboundLineage
 
-        return UnboundLineage(7, configuration_class, config_id, "f" * 64, "s1.similarity-x", True)
+        digest = hashlib.sha256(config_id.encode()).hexdigest()
+        label = config_id.replace("/", ".") + "-x"
+        return UnboundLineage(7, configuration_class, config_id, digest, label, True)
 
     def register_workflow(self, workflow):
         return object()
@@ -596,23 +603,251 @@ def test_analysis_lineage_record_must_match_its_directory(tmp_path):
         _validate_analysis_lineage(chained, marker, chained, None)
 
 
-def test_recovery_drops_analyses_that_depend_on_analyses():
-    from nro.orchestration.ownership import _without_chained_analyses
+GROUP_MANIFEST = """\
+version: 1
+scope: project
+participants: {match: "*", pending: exclude}
+inputs:
+  similarity:
+    from: analysis:similarity
+    select: {contrast: SN}
+outputs:
+  summary: "project-{project}_desc-group_summary.json"
+"""
 
-    def receipt(key, module, dependencies=()):
-        record = {
-            "work_item_key": key,
-            "module": module,
-            "artifact_contract": {"dependencies": list(dependencies)},
-        }
-        return record, Path(f"{key}.json")
+GROUP_CODE = """\
+def run(inputs, params, outputs):
+    rows = {a.participant: len(a.load()) for a in inputs["similarity"]}
+    outputs["summary"].write_json(
+        {"rows": rows, "participants": params["participants"],
+         "excluded": params["excluded_participants"]}
+    )
+"""
 
-    upstream = receipt("p1:u", "contrasts")
-    first = receipt("p1:a", "analyses", ["p1:u"])
-    second = receipt("p1:b", "analyses", ["p1:a", "p1:u"])
-    kept, errors = _without_chained_analyses([upstream, first, second])
-    assert kept == [upstream, first]
-    assert len(errors) == 1 and "p1:b.json" in errors[0]
+
+def _group_study(study_roots, manifest=GROUP_MANIFEST) -> Path:
+    repository = _study(study_roots)
+    directory = add_analysis("s1", "group", scope="project")
+    (directory / "analysis.yml").write_text(manifest)
+    (directory / "analysis.py").write_text(GROUP_CODE)
+    _commit(repository, "Add group")
+    return repository
+
+
+def test_project_scope_reads_analysis_outputs_and_enumerates_participants(study_roots, upstream):
+    bids, index = upstream
+    _group_study(study_roots)
+    group = load_analysis(StudySource.at("s1"), "group")
+    similarity = load_analysis(StudySource.at("s1"), "similarity")
+
+    (item,) = plan_analysis(group, index=index, bids_root=bids)
+    assert item.key == "s1/group/project-p1" and item.participant is None
+    assert item.status == "not_applicable" and item.excluded == ("01", "02")
+
+    upstream_item = plan_analysis(similarity, index=index, bids_root=bids)[0]
+    assert execute(upstream_item).succeeded
+    (item,) = plan_analysis(group, index=index, bids_root=bids)
+    assert item.status == "ready", item.message
+    assert item.participants == ("01",) and item.excluded == ("02",)
+    assert item.outputs["summary"] == (
+        study_roots / "results/s1/analyses/group/project-p1/project-p1_desc-group_summary.json"
+    )
+    result = execute(item)
+    assert result.succeeded, result.log.read_text()
+    summary = json.loads(item.outputs["summary"].read_text())
+    assert summary == {"rows": {"01": 3}, "participants": ["01"], "excluded": ["02"]}
+    assert plan_analysis(group, index=index, bids_root=bids)[0].status == "fresh"
+
+    # A new matching participant changes the enumerated set, even without inputs.
+    (bids / "p1" / "sub-03").mkdir()
+    (item,) = plan_analysis(group, index=index, bids_root=bids)
+    assert item.status == "ready" and item.excluded == ("02", "03")
+
+    # Rerunning the upstream analysis makes the group result stale too.
+    shutil.rmtree(bids / "p1" / "sub-03")
+    assert plan_analysis(group, index=index, bids_root=bids)[0].status == "fresh"
+    index.items[0]["generation"] = 2
+    # With pending: exclude, the stale upstream leaves no participant.
+    assert plan_analysis(group, index=index, bids_root=bids)[0].status == "not_applicable"
+
+    with pytest.raises(ValueError, match="project scope"):
+        plan_analysis(group, index=index, bids_root=bids, participants=["01"])
+
+
+def test_project_scope_waits_for_pending_participants_by_default(study_roots, upstream):
+    bids, index = upstream
+    manifest = GROUP_MANIFEST.replace(", pending: exclude", ', exclude: ["01"]')
+    _group_study(study_roots, manifest)
+    group = load_analysis(StudySource.at("s1"), "group")
+    (item,) = plan_analysis(group, index=index, bids_root=bids)
+    assert item.status == "waiting" and "sub-02" in item.message
+    assert "01" not in item.participants + item.excluded
+
+
+def test_project_scope_manifest_rules():
+    with pytest.raises(ManifestError, match="covers many participants"):
+        parse_manifest(
+            GROUP_MANIFEST.replace("project-{project}_", "sub-{participant}_"), analysis="group"
+        )
+    with pytest.raises(ManifestError, match="reserved in project scope"):
+        parse_manifest(GROUP_MANIFEST + "parameters: {participants: 1}\n", analysis="group")
+    with pytest.raises(ManifestError, match="pending must be"):
+        parse_manifest(GROUP_MANIFEST.replace("exclude}", "later}"), analysis="group")
+    manifest = parse_manifest(GROUP_MANIFEST.replace('"*"', '"re:0[13]"'), analysis="group")
+    assert manifest.participants.select(["01", "02", "03"]) == ("01", "03")
+
+
+def test_scheduled_project_scope_reads_a_planned_analysis(study_roots, upstream):
+    from nro.modules.analyses import __main__ as scheduled
+    from nro.orchestration.study_planning import plan_request
+
+    bids, index = upstream
+    _group_study(study_roots)
+    group = load_analysis(StudySource.at("s1"), "group")
+    item = index.items[0]
+    spec = _upstream_spec(Path(item["output_root"]), item["output_prefix"])
+    plan = plan_request(_StubPlanner(bids, spec), _StubRegistry(), group, _Store())
+
+    (request,) = plan.requests
+    (terminal,) = [plan.work_items[key] for key in request.terminal_keys]
+    assert terminal.is_project_scope and terminal.participant == ""
+    assert request.participants == ("01",)
+    contract = terminal.contract.processing["analysis"]
+    assert contract["participants"] == ["01"] and contract["excluded_participants"] == ["02"]
+    (dependency,) = terminal.dependencies
+    upstream_item = plan.work_items[dependency]
+    assert upstream_item.module == "analyses" and upstream_item.participant == "01"
+    assert upstream_item.entities == {"contrast": "SN"}
+    assert upstream_item.dependencies == (spec.key,)
+    assert terminal.output_root.name == "project-p1"
+    assert terminal.expected_outputs[0].name == "project-p1_analysis-group_manifest.json"
+
+    # Run the upstream analysis, then the group item, from their specifications.
+    upstream_specification = json.loads(Path(upstream_item.runtime_config).read_text())
+    scheduled.run(upstream_specification, work_dir=study_roots / "attempt-upstream")
+    specification = json.loads(Path(terminal.runtime_config).read_text())
+    scheduled.run(specification, work_dir=study_roots / "attempt-group")
+    summary = json.loads(Path(specification["outputs"]["summary"]).read_text())
+    assert summary == {"rows": {"01": 3}, "participants": ["01"], "excluded": ["02"]}
+
+    # A new matching participant changes the contract, so the item is stale.
+    (bids / "p1" / "sub-03").mkdir()
+    replanned = plan_request(_StubPlanner(bids, spec), _StubRegistry(), group, _Store())
+    (again,) = [replanned.work_items[key] for key in replanned.requests[0].terminal_keys]
+    assert again.key == terminal.key
+    assert again.contract.configuration_fingerprint != terminal.contract.configuration_fingerprint
+
+    with pytest.raises(ValueError, match="project scope"):
+        plan_request(
+            _StubPlanner(bids, spec), _StubRegistry(), group, _Store(), participants=("01",)
+        )
+
+
+def test_project_scope_work_item_identity():
+    from nro.orchestration.contracts import subject_label
+    from nro.orchestration.registry_work_items import work_item_relative_directory
+
+    common = dict(
+        key="k",
+        module="analyses",
+        project="p1",
+        entities={"network": "aud"},
+        module_lineage_id=1,
+        config_fingerprint="c",
+        directory_label="d",
+        runtime_config=Path("r.json"),
+        command=("true",),
+        dependencies=(),
+        input_paths=(),
+        output_root=Path("/results/project-p1"),
+        output_prefix=None,
+        resource_class="small",
+        output_format="slots",
+    )
+    from nro.orchestration.contracts import WorkItemSpec
+
+    spec = WorkItemSpec.create(participant="", scope="project", **common)
+    assert spec.is_project_scope and spec.participant == ""
+    with pytest.raises(ValueError, match="requires a participant"):
+        WorkItemSpec.create(participant="", scope="subject", **common)
+    with pytest.raises(ValueError, match="takes no participant"):
+        WorkItemSpec.create(participant="01", scope="project", **common)
+    assert subject_label("") == "project" and subject_label("01") == "sub-01"
+    row = {
+        "project": "p1",
+        "participant": "",
+        "module": "analyses",
+        "entities_json": '{"network": "aud"}',
+        "work_item_key": "analyses:" + "a" * 64,
+    }
+    assert work_item_relative_directory(row) == Path(
+        "p1/analyses/project/project_network-aud/" + "a" * 16
+    )
+
+
+def test_viz_serves_analysis_viewers_and_only_their_outputs(study_roots, upstream, monkeypatch):
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.cookiejar import CookieJar
+
+    from nro.viz.catalog import Catalogs
+    from nro.viz.server import make_server
+
+    bids, index = upstream
+    repository = _group_study(study_roots, GROUP_MANIFEST + "viz: viz/index.html\n")
+    with pytest.raises(ManifestError, match="no viewer page"):
+        load_analysis(StudySource.at("s1"), "group")
+    viewer = repository / "analyses/group/viz"
+    viewer.mkdir()
+    (viewer / "index.html").write_text("<!doctype html><title>group</title>")
+    (viewer / "app.js").write_text("export const ok = true;\n")
+    _commit(repository, "Add viewer")
+    group = load_analysis(StudySource.at("s1"), "group")
+    similarity = load_analysis(StudySource.at("s1"), "similarity")
+    assert execute(plan_analysis(similarity, index=index, bids_root=bids)[0]).succeeded
+    (item,) = plan_analysis(group, index=index, bids_root=bids)
+    assert execute(item).succeeded
+
+    monkeypatch.setattr("nro.viz.analyses.studies", lambda: ("s1",))
+    server = make_server(Catalogs(lambda branch: []), host="127.0.0.1", port=0, token="secret")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+
+    def status(url):
+        try:
+            with opener.open(base + url) as response:
+                return response.status
+        except urllib.error.HTTPError as error:
+            return error.code
+
+    try:
+        assert status("/api/analyses") == 403
+        opener.open(f"{base}/?token=secret").read()
+        with opener.open(f"{base}/api/analyses") as response:
+            (listed,) = json.loads(response.read())
+        assert listed["name"] == "s1/group" and listed["url"] == "/analyses/s1/group/index.html"
+        with opener.open(base + listed["url"]) as response:
+            assert b"<title>group</title>" in response.read()
+            assert response.headers["Content-Type"].startswith("text/html")
+        with opener.open(f"{base}/analyses/s1/group/app.js") as response:
+            assert response.headers["Content-Type"].startswith("text/javascript")
+        assert status("/analyses/s1/group/%2e%2e/analysis.py") == 403
+        assert status("/analyses/s1/similarity/index.html") == 404
+        with opener.open(f"{base}/api/analysis/outputs?analysis=s1/group") as response:
+            (output,) = json.loads(response.read())
+        assert output["participant"] is None and output["slot"] == "summary"
+        with opener.open(
+            f"{base}/api/analysis/file?analysis=s1/group&project=p1&file={output['file']}"
+        ) as response:
+            assert json.loads(response.read())["participants"] == ["01"]
+        assert status("/api/analysis/file?analysis=s1/group&project=p1&file=analysis.yml") == 404
+        assert status("/api/template-mesh?space=fsLR&hemi=L&kind=pial") == 400
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 @pytest.mark.parametrize(

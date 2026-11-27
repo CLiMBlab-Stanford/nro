@@ -93,6 +93,9 @@ def _manifest_candidates(row: dict) -> tuple[Path, ...]:
 def _row_matches(row: dict, selection, *, match_module: bool = True) -> bool:
     if row.get("status") not in {None, "Success", "success"}:
         return False
+    # Scenes show one participant's surfaces; project-scope items have none.
+    if not row.get("participant"):
+        return False
     if selection.projects and row.get("project") not in selection.projects:
         return False
     if selection.participants and row.get("participant") not in selection.participants:

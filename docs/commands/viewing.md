@@ -167,6 +167,10 @@ keeps its port and token, so tunnels and open pages keep working, but it must
 read time series again. Changes to the page's own HTML, CSS, and JavaScript
 need only a browser reload.
 
+Analyses that declare a [viewer page](studies.md#viewer-pages) appear as
+tabs above the viewer once they have published outputs. Reload the page to
+pick up new analysis tabs.
+
 ### What the page shows
 
 The page lists every registered branch. It starts on the branch of the

@@ -16,6 +16,26 @@ def _normalized_path(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
 
 
+PROJECT_SCOPE = "project"
+"""Scope of a work item that covers many participants of one project.
+
+Such a work item stores the empty string as its participant. Every other scope
+requires a participant.
+"""
+
+
+def is_project_scope(row: Mapping[str, Any] | "WorkItemSpec") -> bool:
+    """Return whether a work-item spec or registry row has project scope."""
+    scope = row.scope if isinstance(row, WorkItemSpec) else row.get("scope")
+    return scope == PROJECT_SCOPE
+
+
+def subject_label(participant: object) -> str:
+    """Return ``sub-ID`` for a participant, or ``project`` for a project-scope item."""
+    value = str(participant or "").removeprefix("sub-")
+    return f"sub-{value}" if value else "project"
+
+
 @dataclass(frozen=True)
 class WorkItemIdentity:
     """Identify one schedulable application of a module lineage."""
@@ -156,7 +176,17 @@ class WorkItemSpec:
         expected_outputs: Sequence[Path] = (),
         processing: Mapping[str, Any] | None = None,
     ) -> "WorkItemSpec":
-        """Construct the hierarchy from fields convenient for module planners."""
+        """Construct the hierarchy from fields convenient for module planners.
+
+        A project-scope work item takes the empty string as its participant;
+        every other scope requires one. Raises ValueError otherwise.
+        """
+        participant = "" if participant is None else str(participant)
+        if (scope == PROJECT_SCOPE) != (participant == ""):
+            raise ValueError(
+                f"Work item {key}: scope {scope!r} "
+                + ("requires a participant" if not participant else "takes no participant")
+            )
         if output_format is None:
             from nro.orchestration.catalog import module_descriptor
 
@@ -212,8 +242,13 @@ class WorkItemSpec:
 
     @property
     def participant(self) -> str:
-        """Participant identifier for this work item."""
+        """Participant identifier, or the empty string for a project-scope item."""
         return self.identity.participant
+
+    @property
+    def is_project_scope(self) -> bool:
+        """Return whether this work item covers many participants of its project."""
+        return self.scope == PROJECT_SCOPE
 
     @property
     def entities(self) -> Mapping[str, str]:

@@ -31,7 +31,11 @@ STATIC_TYPES = {
     "index.html": "text/html; charset=utf-8",
     "viz.css": "text/css; charset=utf-8",
     "viz.js": "text/javascript; charset=utf-8",
+    "tabs.js": "text/javascript; charset=utf-8",
+    "host.js": "text/javascript; charset=utf-8",
 }
+TEMPLATE_SPACES = {"fsaverage": 163842, "fsaverage6": 40962}
+TEMPLATE_KINDS = ("midthickness", "pial", "white", "sphere")
 COMPRESS_MINIMUM_BYTES = 64 * 1024
 
 
@@ -69,6 +73,22 @@ class VizServer(ThreadingHTTPServer):
         self.token = token
         self.correlation = data.SeedCorrelation(cache_bytes)
         self.restart = restart
+        self._viewers: dict[str, object] = {}
+
+    def analysis_viewers(self, *, refresh: bool = False) -> dict[str, object]:
+        """Return analysis viewers by name, rescanning the studies when asked."""
+        if refresh or not self._viewers:
+            from nro.viz.analyses import viewers
+
+            self._viewers = {viewer.name: viewer for viewer in viewers()}
+        return self._viewers
+
+    def analysis_viewer(self, name: str):
+        """Return one analysis viewer, rescanning once if it is not cached."""
+        found = self.analysis_viewers().get(name) or self.analysis_viewers(refresh=True).get(name)
+        if found is None:
+            raise RequestError(HTTPStatus.NOT_FOUND, f"No analysis viewer named {name}")
+        return found
 
 
 class VizHandler(BaseHTTPRequestHandler):
@@ -148,6 +168,26 @@ class VizHandler(BaseHTTPRequestHandler):
             self._static("index.html")
         elif path.startswith("/static/"):
             self._static(path.removeprefix("/static/"))
+        elif path.startswith("/analyses/"):
+            self._viewer_file(path.removeprefix("/analyses/"))
+        elif path == "/api/analyses":
+            viewers = self.server.analysis_viewers(refresh=True).values()
+            self._json([viewer.public() for viewer in viewers])
+        elif path == "/api/analysis/outputs":
+            self._json(self.server.analysis_viewer(query["analysis"]).outputs())
+        elif path == "/api/analysis/file":
+            viewer = self.server.analysis_viewer(query["analysis"])
+            try:
+                found = viewer.output_file(
+                    query["project"], query["file"], query.get("participant") or None
+                )
+            except FileNotFoundError as error:
+                raise RequestError(HTTPStatus.NOT_FOUND, str(error)) from None
+            from nro.viz.analyses import content_type
+
+            self._send(found.read_bytes(), content_type(found))
+        elif path == "/api/template-mesh":
+            self._template_mesh(query)
         elif path == "/api/ping":
             self._json({"ok": True})
         elif path == "/api/branches":
@@ -208,6 +248,44 @@ class VizHandler(BaseHTTPRequestHandler):
             self.server.restart()
         else:
             raise RequestError(HTTPStatus.NOT_FOUND, f"Unknown action {path}")
+
+    def _viewer_file(self, rest: str) -> None:
+        """Serve ``STUDY/ANALYSIS/PATH`` from an analysis's viewer directory."""
+        from urllib.parse import unquote
+
+        from nro.viz.analyses import content_type
+
+        parts = unquote(rest).split("/", 2)
+        if len(parts) != 3 or not parts[2]:
+            raise RequestError(HTTPStatus.NOT_FOUND, "Name a file as /analyses/STUDY/ANALYSIS/PATH")
+        viewer = self.server.analysis_viewer(f"{parts[0]}/{parts[1]}")
+        try:
+            found = viewer.viewer_file(parts[2])
+        except PermissionError as error:
+            raise RequestError(HTTPStatus.FORBIDDEN, str(error)) from None
+        except FileNotFoundError as error:
+            raise RequestError(HTTPStatus.NOT_FOUND, str(error)) from None
+        self._send(found.read_bytes(), content_type(found))
+
+    def _template_mesh(self, query: dict[str, str]) -> None:
+        from nro.engine.templates import find_fsaverage_surface
+
+        space, hemisphere, kind = query["space"], query["hemi"], query["kind"]
+        if space not in TEMPLATE_SPACES:
+            raise RequestError(HTTPStatus.BAD_REQUEST, f"Unknown template space {space!r}")
+        if hemisphere not in HEMISPHERES or kind not in TEMPLATE_KINDS:
+            raise RequestError(HTTPStatus.BAD_REQUEST, f"Unknown surface {hemisphere} {kind}")
+        try:
+            path = find_fsaverage_surface(
+                hemi=hemisphere, surface=kind, n_vertices=TEMPLATE_SPACES[space]
+            )
+        except FileNotFoundError as error:
+            raise RequestError(HTTPStatus.NOT_FOUND, str(error)) from None
+        coordinates, triangles = data.mesh(path)
+        self._binary(
+            coordinates.tobytes() + triangles.tobytes(),
+            {"X-Vertices": len(coordinates), "X-Triangles": len(triangles)},
+        )
 
     def _connectivity(self, identifier: str):
         layer = self.server.catalogs.layer(identifier)

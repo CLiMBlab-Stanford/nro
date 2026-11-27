@@ -477,8 +477,14 @@ def _assess_direct_inputs(
     *,
     registered_only: bool,
 ) -> tuple[str | None, str | None]:
-    """Compare one work item's selected source universe with its compiled graph."""
-    if registered_only:
+    """Compare one work item's selected source universe with its compiled graph.
+
+    A project-scope work item selects no raw source files, so there is nothing
+    to compare.
+    """
+    from nro.orchestration.contracts import is_project_scope
+
+    if registered_only or is_project_scope(row):
         return None, None
 
     from nro.definitions.hardware import gradient_unwarping_records
