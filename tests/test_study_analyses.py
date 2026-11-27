@@ -865,3 +865,30 @@ def test_default_index_reads_the_snapshot_when_branch_registries_hold_lineages(
     assert type(index).__name__ == expected
     if branch_registries:
         assert index.branch == "feature"
+
+
+def test_subject_signatures_match_releases_before_project_scope(study_roots, upstream):
+    import hashlib
+
+    from nro.analysis.planning import _input_signature, _jsonable, work_item_signature
+
+    bids, index = upstream
+    _study(study_roots)
+    analysis = load_analysis(StudySource.at("s1"), "similarity")
+    item = plan_analysis(analysis, index=index, bids_root=bids)[0]
+    source = analysis.source
+    legacy = {
+        "analysis": analysis.name,
+        "version": analysis.manifest.version,
+        "manifest": analysis.manifest.digest,
+        "code": source.tree_hash("analyses/similarity"),
+        "common": source.tree_hash("common"),
+        "container": analysis.container,
+        "parameters": _jsonable(item.parameters),
+        "project": item.project,
+        "participant": item.participant,
+        "entities": dict(sorted(item.entities.items())),
+        "inputs": {key: _input_signature(value) for key, value in sorted(item.inputs.items())},
+    }
+    expected = hashlib.sha256(json.dumps(legacy, sort_keys=True).encode("utf-8")).hexdigest()
+    assert work_item_signature(item) == expected == item.signature
