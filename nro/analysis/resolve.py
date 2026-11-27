@@ -140,14 +140,52 @@ class SnapshotIndex:
         return sorted(result, key=lambda item: item["key"])
 
 
+def _uses_branch_registries() -> bool:
+    """Return whether this installation records lineages in branch registries.
+
+    Such installations stop updating the per-project registry that
+    ``RegistryIndex`` reads, so its workflow bindings are out of date.
+    """
+    from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site import configuration as site
+
+    if site.installation_record().get("mode") in {"personal", "shared", "branch"}:
+        return True
+    return implementation_path(Path(site.settings()[0]["registry"])).is_file()
+
+
+def _checkout_branch() -> str:
+    """Return the registered branch of this checkout, or ``main``."""
+    from nro.orchestration.branch_store import BranchStore
+    from nro.site.configuration import CHECKOUT, settings
+
+    try:
+        records = BranchStore(Path(settings()[0]["registry"])).read().topology.records
+    except (OSError, ValueError, KeyError):
+        return "main"
+    checkout = Path(CHECKOUT).absolute()
+    for name, record in records.items():
+        if checkout in {Path(path).absolute() for path in record.checkouts}:
+            return str(name)
+    return "main"
+
+
 def default_index() -> UpstreamIndex:
-    """Return the registry index when direct access is allowed, else the snapshot."""
+    """Return the upstream index that reflects current workflow bindings.
+
+    Installations that use branch registries, and installations without
+    direct registry access, read the scheduler's published snapshot for this
+    checkout's branch. Only a standalone installation reads the per-project
+    registry.
+    """
     from nro.site.configuration import require_execution_support
 
     try:
         require_execution_support()
     except ValueError:
         return SnapshotIndex()
+    if _uses_branch_registries():
+        return SnapshotIndex(branch=_checkout_branch())
     return RegistryIndex()
 
 

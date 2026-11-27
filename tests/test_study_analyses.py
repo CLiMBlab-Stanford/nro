@@ -848,3 +848,20 @@ def test_viz_serves_analysis_viewers_and_only_their_outputs(study_roots, upstrea
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.mark.parametrize(
+    ("branch_registries", "expected"), [(True, "SnapshotIndex"), (False, "RegistryIndex")]
+)
+def test_default_index_reads_the_snapshot_when_branch_registries_hold_lineages(
+    monkeypatch, branch_registries, expected
+):
+    from nro.analysis import resolve
+
+    monkeypatch.setattr(site, "require_execution_support", lambda *args, **kwargs: None)
+    monkeypatch.setattr(resolve, "_uses_branch_registries", lambda: branch_registries)
+    monkeypatch.setattr(resolve, "_checkout_branch", lambda: "feature")
+    index = resolve.default_index()
+    assert type(index).__name__ == expected
+    if branch_registries:
+        assert index.branch == "feature"
