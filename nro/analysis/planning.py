@@ -115,10 +115,13 @@ def work_item_signature(item: AnalysisWorkItem) -> str:
         "parameters": _jsonable(item.parameters),
         "project": item.project,
         "participant": item.participant,
-        "participants": list(item.participants),
         "entities": dict(sorted(item.entities.items())),
         "inputs": {key: _input_signature(value) for key, value in sorted(item.inputs.items())},
     }
+    if item.participant is None:
+        # Only project-scope signatures enumerate participants, so results of
+        # other scopes keep the signatures that earlier releases recorded.
+        document["participants"] = list(item.participants)
     return hashlib.sha256(json.dumps(document, sort_keys=True).encode("utf-8")).hexdigest()
 
 
