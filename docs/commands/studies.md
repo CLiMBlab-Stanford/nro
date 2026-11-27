@@ -11,6 +11,9 @@ relative path, and never into a project's `derivatives/`.
 | `study_code` | `/juice6/u/nlp/climblab/STUDIES/CODE` |
 | `study_results` | `/juice6/u/nlp/climblab/STUDIES/RESULTS` |
 
+Change them with `nro site set --maintain storage.study_code=DIR
+storage.study_results=DIR`. Existing studies and results are not moved.
+
 `nro run --study-analysis STUDY/ANALYSIS` plans an analysis through the shared
 scheduler, together with any upstream work its inputs need, and creates one
 request per member project. `--study-ref` names the study branch, tag, or

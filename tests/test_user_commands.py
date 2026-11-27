@@ -2285,3 +2285,13 @@ def test_run_parser_accepts_explicit_local_choice() -> None:
     assert build_parser().parse_args(["-P", "x"]).local is None
     assert build_parser().parse_args(["-P", "x", "--local"]).local is True
     assert build_parser().parse_args(["-P", "x", "--no-local"]).local is False
+
+
+def test_every_storage_and_resource_setting_is_settable() -> None:
+    from nro.site.configuration import SITE_SECTIONS
+    from nro.site.policy import SITE_SETTINGS, canonical_key
+
+    for section in ("storage", "resources"):
+        for key in SITE_SECTIONS[section]:
+            assert f"{section}.{key}" in SITE_SETTINGS, f"{section}.{key} cannot be set"
+    assert canonical_key("storage.study_results") == "storage.study_results"
