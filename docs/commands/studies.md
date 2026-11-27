@@ -19,10 +19,12 @@ scheduler, together with any upstream work its inputs need, and creates one
 request per member project. `--study-ref` names the study branch, tag, or
 commit to plan from; the default is `main`. `--project` and `--participant`
 narrow the request. `nro study run` instead executes analyses directly from the
-command line, one work item after another. In a development
-installation, `query`, `check`, `try`, and `run` read upstream state from the
-scheduler's last published status snapshot of `main`, which can trail the
-registry by one scheduler update.
+command line, one work item after another. `query`, `check`, `try`, and `run`
+read upstream state from the scheduler's last published status snapshot, which
+can trail the registry by one scheduler update. A registered checkout reads its
+own branch's snapshot, and an unregistered development checkout reads `main`.
+Only a standalone installation without branch registries reads the
+per-project registry directly.
 
 ## Create a study and an analysis
 
