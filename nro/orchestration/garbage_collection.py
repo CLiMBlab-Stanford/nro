@@ -17,6 +17,7 @@ from nro.orchestration.artifact_ownership import (
 from nro.orchestration.branch_purge import snapshot
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
+from nro.orchestration.contracts import subject_label
 from nro.orchestration.purge_paths import _remove_path
 from nro.orchestration.selection import discover_bids_inventory
 
@@ -197,7 +198,8 @@ def collect(
     ]
     if active:
         rendered = ", ".join(
-            f"{row['project']}:{row['module']}:sub-{row['participant']}" for row in active
+            f"{row['project']}:{row['module']}:{subject_label(row['participant'])}"
+            for row in active
         )
         raise ValueError(
             f"Refusing to collect garbage during active derivative attempt(s): {rendered}"

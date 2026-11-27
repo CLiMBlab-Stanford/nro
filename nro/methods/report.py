@@ -153,7 +153,9 @@ def workflow_lineages(workflow: Any, modules: Sequence[str] | None = None) -> tu
 
 
 def _entities(project: str, row: Mapping[str, Any]) -> dict[str, str]:
-    entities = {"project": project, "participant": str(row["participant"])}
+    entities = {"project": project}
+    if row["participant"]:
+        entities["participant"] = str(row["participant"])
     for key, value in dict(row["entities"]).items():
         if key in _ENTITY_NAMES and value not in (None, ""):
             entities[_ENTITY_NAMES[key]] = str(value)
@@ -197,6 +199,9 @@ class _Sample:
     without_session: frozenset[tuple[str, str]]
 
     def admits(self, project: str, row: Mapping[str, Any]) -> bool:
+        if not row["participant"]:
+            # A project-scope item belongs to a sample that includes its project.
+            return any(member == project for member, _participant in self.participants)
         participant = (project, str(row["participant"]))
         session = dict(row["entities"]).get("ses")
         if session in (None, ""):
@@ -253,6 +258,7 @@ def registry_manifests(
         sessions = {
             (project, str(row["participant"]), str(dict(row["entities"]).get("ses") or ""))
             for project, row in selected
+            if row["participant"]
         }
         return _Sample(
             participants=frozenset(key[:2] for key in sessions),

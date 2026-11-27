@@ -58,7 +58,7 @@ def build_parser(*, prog: str = "nro study") -> argparse.ArgumentParser:
 
     add = commands.add_parser("add", help="Write an analysis skeleton without committing it.")
     add.add_argument("analysis", metavar="STUDY/ANALYSIS")
-    add.add_argument("--scope", default="subject", choices=("subject", "run"))
+    add.add_argument("--scope", default="subject", choices=("subject", "run", "project"))
 
     listing = commands.add_parser("list", help="List studies and analyses on main.")
     listing.add_argument("study", nargs="?")
@@ -140,6 +140,8 @@ def _describe(item) -> dict:
         "status": item.status,
         "message": item.message,
         "parameters": item.parameters,
+        "participants": list(item.participants),
+        "excluded_participants": list(item.excluded),
         "inputs": {
             name: (
                 None
@@ -165,8 +167,10 @@ def _print_items(items, *, verbose: bool) -> None:
             for name, value in _describe(item)["inputs"].items():
                 shown = value if isinstance(value, list) else [value]
                 print(f"    input {name}:")
-                for entry in shown:
+                for entry in shown[:10]:
                     print(f"      {entry}")
+                if len(shown) > 10:
+                    print(f"      ... and {len(shown) - 10} more; --json lists every file")
             for slot, path in item.outputs.items():
                 print(f"    output {slot}: {path}")
     summary = ", ".join(f"{count} {status}" for status, count in sorted(counts.items()))

@@ -337,8 +337,14 @@ def resolve_input(
     index: UpstreamIndex,
     bids_root: Path,
     run_entities: Mapping[str, str] | None = None,
+    missing: str = "error",
 ) -> Resolution:
-    """Resolve one input for one work item without raising for data conditions."""
+    """Resolve one input for one work item without raising for data conditions.
+
+    ``missing`` is the status of a single-file input that nothing matches and
+    nothing pending may supply: ``error``, or ``not_applicable`` when the
+    caller excludes such participants.
+    """
     participant = participant.removeprefix("sub-")
     pending: list[str] = []
     lineage = None
@@ -368,6 +374,7 @@ def resolve_input(
         where=f"sub-{participant} in project {project}",
         pending=pending,
         lineage=lineage,
+        missing=missing,
     )
 
 
@@ -378,8 +385,13 @@ def choose(
     where: str,
     pending: Sequence[str] = (),
     lineage: str | None = None,
+    missing: str = "error",
 ) -> Resolution:
-    """Apply an input's cardinality rules to its matching candidates."""
+    """Apply an input's cardinality rules to its matching candidates.
+
+    ``missing`` is the status returned when a required single-file input has
+    no candidate and nothing is pending.
+    """
     pending = list(pending)
     candidates = sorted(candidates, key=lambda item: str(item.path))
     listed = "".join(f"\n  {item.path}" for item in candidates)
@@ -420,7 +432,7 @@ def choose(
             return Resolution(spec.name, "ok", None, lineage=lineage)
         return Resolution(
             spec.name,
-            "error",
+            missing,
             message=f"input {spec.name}: no file matches {where} with select {dict(spec.select)}",
             lineage=lineage,
         )

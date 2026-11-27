@@ -60,11 +60,11 @@ analysis_api = {API_VERSION}
 
 
 def _manifest(scope: str) -> str:
-    placeholder = "{participant}" if scope == "subject" else "{stem}"
-    name = f"sub-{placeholder}" if scope == "subject" else placeholder
+    name = {"subject": "sub-{participant}", "run": "{stem}", "project": "project-{project}"}[scope]
+    participants = 'participants: {match: "*"}\n' if scope == "project" else ""
     return f"""version: 1
 scope: {scope}
-inputs:
+{participants}inputs:
   maps:
     from: contrasts
     workflow: main

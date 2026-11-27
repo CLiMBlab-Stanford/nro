@@ -8,6 +8,7 @@ from pathlib import Path
 
 from nro.engine.cli import add_core_selection_arguments, confirm, core_selection, page_text
 from nro.orchestration.catalog import MODULES
+from nro.orchestration.contracts import subject_label
 from nro.orchestration.scheduler_client import maintenance
 from nro.site.configuration import CHECKOUT, settings
 
@@ -44,7 +45,10 @@ def _render(report: dict) -> str:
     lines = [f"Freshen preview for branch {report['branch']}", ""]
     for item in report["items"]:
         entities = " ".join(f"{key}={value}" for key, value in sorted(item["entities"].items()))
-        label = f"{item['project']} sub-{item['participant']} {item['module']}/{item['lineage']}"
+        label = (
+            f"{item['project']} {subject_label(item['participant'])} "
+            f"{item['module']}/{item['lineage']}"
+        )
         if entities:
             label += f" ({entities})"
         lines.append(f"{item['action'].upper():8} {label}")

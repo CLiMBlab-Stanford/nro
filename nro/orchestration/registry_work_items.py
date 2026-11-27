@@ -33,9 +33,11 @@ def work_item_relative_directory(work_item: Mapping[str, object]) -> Path:
     preferred = ("ses", "task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk")
     ordered = [key for key in preferred if key in entities]
     ordered.extend(sorted(set(entities) - set(ordered)))
-    name = "_".join([f"sub-{participant}", *(f"{key}-{entities[key]}" for key in ordered)])
+    # A project-scope item has no participant; its logs sit under "project".
+    owner = f"sub-{participant}" if participant else "project"
+    name = "_".join([owner, *(f"{key}-{entities[key]}" for key in ordered)])
     digest = str(work_item["work_item_key"]).rsplit(":", 1)[-1][:16]
-    return Path(project) / str(work_item["module"]) / f"sub-{participant}" / name / digest
+    return Path(project) / str(work_item["module"]) / owner / name / digest
 
 
 def upsert_work_item_graph(

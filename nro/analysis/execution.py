@@ -34,6 +34,13 @@ def _input_spec(value):
     return value.as_spec()
 
 
+def _entities(item: AnalysisWorkItem) -> dict:
+    entities = {"project": item.project}
+    if item.participant is not None:
+        entities["participant"] = item.participant
+    return {**entities, **item.entities}
+
+
 def specification(item: AnalysisWorkItem, *, code_root: Path, staging: Path) -> dict:
     """Return the JSON specification the runner reads."""
     analysis = item.analysis
@@ -45,7 +52,7 @@ def specification(item: AnalysisWorkItem, *, code_root: Path, staging: Path) -> 
         "inputs": {name: _input_spec(value) for name, value in item.input_values().items()},
         "outputs": {slot: str(staging / path.name) for slot, path in item.outputs.items()},
         "parameters": item.parameters,
-        "entities": {"project": item.project, "participant": item.participant, **item.entities},
+        "entities": _entities(item),
         "work_dir": str(staging.parent),
     }
 

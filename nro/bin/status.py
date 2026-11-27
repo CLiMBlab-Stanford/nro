@@ -18,6 +18,7 @@ from nro.engine.cli import (
 from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.modules import MODULE_NAMES
 from nro.orchestration.attempt_files import AttemptFiles
+from nro.orchestration.contracts import subject_label
 
 _RESET = "\x1b[0m"
 _BOLD = "\x1b[1m"
@@ -82,7 +83,7 @@ def _work_item_identifier(item: dict) -> str:
         entities = " ".join(f"{key}={value}" for key, value in sorted(entities.items()))
     lineage = item.get("lineage") or item.get("directory_label")
     label = f"{item['module']}/{lineage}" if lineage else item["module"]
-    return f"{item['project']} sub-{item['participant']} {label}" + (
+    return f"{item['project']} {subject_label(item['participant'])} {label}" + (
         f" ({entities})" if entities else ""
     )
 
@@ -118,7 +119,7 @@ def _render_report(
         lineage = str(row.get("lineage") or "-")
         elapsed = _format_elapsed(row.get("elapsed_seconds"))
         lines.append(
-            f"{row['project'][:14]:14} {row['participant'][:14]:14} "
+            f"{row['project'][:14]:14} {str(row['participant'] or '(project)')[:14]:14} "
             f"{row['module'][:20]:20} {lineage:{lineage_width}} {status_column} "
             f"{elapsed:12} "
             f"{str(row['memory_gb']) + 'G':8} "
@@ -239,8 +240,11 @@ def _ordered_status_rows(rows: list[dict], dependencies: list[tuple[int, int]]) 
         )
         lineage = str(row.get("directory_label") or row.get("config_id") or "-")
         stable = str(row.get("work_item_key") or row["id"])
+        # Project-scope rows have no participant and follow the project's subjects.
         return (
-            *group,
+            group[0],
+            group[1] == "",
+            group[1],
             ranks[group][str(row["module"])],
             lineage,
             entities,
@@ -289,6 +293,7 @@ def _failure_detail(row: dict, *, project: str) -> dict:
         "work_item_id": int(row["id"]),
         "project": project,
         "participant": row["participant"],
+        "scope": row.get("scope"),
         "module": row["module"],
         "lineage": row.get("directory_label") or row.get("config_id"),
         "entities": entities,
@@ -506,6 +511,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             {
                 "project": project,
                 "participant": row["participant"],
+                "scope": row.get("scope"),
                 "module": row["module"],
                 "lineage": row.get("directory_label") or row.get("config_id") or "-",
                 "route": json.loads(row.get("configuration_route_json") or "[]"),

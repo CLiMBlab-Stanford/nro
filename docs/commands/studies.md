@@ -84,11 +84,13 @@ resources: {class: small}
 | `version` | Integer you control. Changing it makes every result stale. |
 | `entry` | Function name in `analysis.py`. Defaults to `run`. |
 | `environment.container` | Image to run in. Defaults to the study's `container`. Without one, the analysis runs in nro's Python environment. |
-| `scope` | `subject` (one work item per participant) or `run` (one per raw BOLD run). |
+| `scope` | `subject` (one work item per participant), `run` (one per raw BOLD run), or `project` (one per member project, reading many participants). |
+| `participants` | Project scope only: which participants the work item reads. See [project scope](#project-scope). |
 | `inputs` | Named inputs, described below. |
 | `outputs` | Slot name to filename pattern. Every work item has exactly these slots. |
 | `parameters` | Values passed to the function. |
 | `resources` | `class` (`small`, `medium`, or `large`) and optional `memory_gb`. Recorded only for now. |
+| `viz` | A viewer page for `nro viz`, such as `viz/index.html`. See [viewer pages](#viewer-pages). |
 
 ### Parameters and expansion
 
@@ -118,7 +120,7 @@ Each input names a source, an upstream configuration, and a selector:
 
 | Key | Meaning |
 | --- | --- |
-| `from` | An nro module, such as `contrasts`, or `raw` for source BIDS files. |
+| `from` | An nro module, such as `contrasts`, `raw` for source BIDS files, or `analysis:NAME` for another analysis in the same study. |
 | `workflow` | Use the lineage that this workflow selects for the module. Defaults to `main`. |
 | `config` | Use this configuration ID of the module instead. Fails if workflows that select it lead to more than one lineage. |
 | `select` | Entity filter on filenames. A scalar requires equality, a list accepts any listed value, and `null` requires the entity to be absent. `suffix` and `extension` (such as `.dscalar.nii`) can be selected too. |
@@ -143,8 +145,63 @@ items are not fresh yet, the work item is reported as waiting.
 All inputs are resolved and passed together in one call. Only `scope` and
 expanded parameters create more work items.
 
-An analysis cannot read another analysis's outputs. Do sequential steps inside
-one analysis and write each result you want to keep to its own output slot.
+### Inputs from another analysis
+
+`from: analysis:NAME` reads the output slots of another subject- or run-scope
+analysis in the same study, at the same commit. `select` filters the upstream
+filenames, and `workflow`, `config`, and `path` are not allowed. Planning the
+reading analysis also plans the upstream one. A participant whose upstream work
+item is ready or waiting is waiting too, and rerunning the upstream analysis
+makes the reading analysis stale. An upstream work item that is an error or not
+applicable supplies no files. Inputs that form a cycle are an error.
+
+With `nro study run`, upstream freshness is judged the way `nro study check`
+judges it, so run the upstream analysis with `nro study run` too. A scheduled
+run plans the upstream analysis in the same request; see
+[scheduled runs](#scheduled-runs).
+
+### Project scope
+
+A project-scope analysis has one work item per member project. It reads the
+inputs of the participants that its `participants` block selects:
+
+```yaml
+version: 1
+scope: project
+participants:
+  match: "re:.*[02468]"   # default "*"
+  exclude: ["044"]
+  pending: wait           # or exclude
+inputs:
+  maps:
+    from: analysis:project_networks
+    select: {suffix: networks, extension: .npy}
+outputs:
+  pca: "project-{project}_desc-networkPCA_stat.npz"
+```
+
+`match` takes the same patterns as command-line [selectors](index.md#shared-selectors).
+Planning expands it against the project's BIDS participants and resolves each
+input once per selected participant, with the usual rules. A participant is
+included when every input resolves. A participant is excluded when an input
+does not apply to it, including a single-file input that matches nothing. With
+`pending: wait`, the default, any participant whose upstream work is not fresh
+holds the whole work item. With `pending: exclude`, that participant is left
+out instead. Any other resolution problem is an error.
+
+The included and excluded participants are listed in full in the work item's
+signature and provenance. The result therefore becomes stale when a matching
+participant is added or removed, or when a participant's inputs appear or
+disappear. The code receives the lists as `params["participants"]` and
+`params["excluded_participants"]`, so those parameter names are reserved. Each
+input arrives as one `InputSet` holding every included participant's files in
+participant order. Each artifact has a `participant` attribute.
+
+Project-scope output patterns may use `{project}` and expanded parameters, but
+not `{participant}` or run entities. Outputs go to
+`STUDIES/RESULTS/STUDY/analyses/ANALYSIS/project-PROJECT/`. `--participant`
+is rejected for a project-scope analysis because it would change the selected
+set.
 
 ## Analysis code
 
@@ -204,12 +261,65 @@ tmaps = query(project="a001", participant="004", module="contrasts",
               many=True)
 ```
 
+## Viewer pages
+
+An analysis can ship a browser page that `nro viz` shows as its own tab, next
+to the default **Surfaces** viewer. Name the page with `viz`. It must be an
+HTML file in a subdirectory of the analysis, and `nro study validate` fails
+when the committed file is missing. A tab appears for each analysis on its
+study's `main` branch that declares a page and has at least one published
+output. Each tab is a separate frame, so switching tabs keeps every view's
+state.
+
+The server reads the page and every other file in its directory from the
+extracted commit, at `/analyses/STUDY/ANALYSIS/PATH`. The page reads its data
+through these endpoints:
+
+| Endpoint | Returns |
+| --- | --- |
+| `/api/analysis/outputs?analysis=STUDY/ANALYSIS` | Each published output: `project`, `participant` (`null` for project scope), `slot`, `file`, `size`, `commit`, `published`, and `parameters`. |
+| `/api/analysis/file?analysis=...&project=...&file=...[&participant=...]` | One listed output file. |
+| `/api/template-mesh?space=fsaverage6&hemi=L&kind=midthickness` | Template geometry as float32 coordinates followed by uint32 triangles, with `X-Vertices` and `X-Triangles` headers. `space` is `fsaverage6` or `fsaverage`, and `kind` is `midthickness`, `pial`, `white`, or `sphere`. |
+
+Only files that carry a provenance sidecar are listed or served, so a page
+cannot read other files.
+
+`/static/host.js` wraps these endpoints. It exports `outputs()`,
+`outputFile(entry, {as})`, `parseNpy(buffer)`, `templateMesh(space, hemi,
+kind)`, `inflate(mesh)` for a smoothed display surface, the default viewer's
+colormaps through `color(value, scale)`, and `SurfaceView`, which draws both
+hemispheres side by side. A page needs its own import map for three.js:
+
+```html
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/static/viz.css">
+<script type="importmap">
+  {"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+<main><canvas id="canvas"></canvas></main>
+<script type="module">
+  import { outputs, outputFile, SurfaceView, templateMesh } from "/static/host.js";
+  const view = new SurfaceView(document.getElementById("canvas"));
+  view.setMeshes({
+    L: await templateMesh("fsaverage6", "L"),
+    R: await templateMesh("fsaverage6", "R"),
+  });
+  const [first] = await outputs();
+  const summary = await outputFile(first, { as: "json" });
+</script>
+```
+
+Viewer pages show results from the site `study_results` root. Results that
+scheduled runs write for a development branch are not shown yet.
+
 ## Commands
 
 | Command | Effect |
 | --- | --- |
 | `nro study init STUDY [--project P ...]` | Create the repository and results directory, and commit. |
-| `nro study add STUDY/ANALYSIS [--scope run]` | Write an analysis skeleton without committing it. |
+| `nro study add STUDY/ANALYSIS [--scope run\|project]` | Write an analysis skeleton without committing it. |
 | `nro study list [STUDY]` | List studies and analyses on `main`, with scope, last commit, and validity. |
 | `nro study validate [STUDY[/ANALYSIS]] [--worktree]` | Check `study.yml`, manifests, and that `analysis.py` defines the entry function. Code is parsed, not run. |
 | `nro study check STUDY/ANALYSIS [KEY=VALUE ...]` | Plan and print each work item's status, inputs, and output paths. `--worktree` plans from uncommitted files; `--json` prints JSON. |
@@ -256,11 +366,31 @@ are chosen when the work item runs, from those work items' outputs, so a
 reported as not applicable. `config:` inputs cannot be scheduled yet; use
 `workflow:`.
 
+An `analysis:` input makes the request plan the upstream analysis too, and each
+work item depends on the upstream analysis's work items for its participant.
+When it runs, it reads the files that their completion manifests list.
+
+A project-scope analysis has one work item per project and parameter
+combination. Its participant column is empty and its scope is `project`.
+Planning expands the `participants` selector against BIDS. A selected
+participant is included when every required input has planned upstream work,
+and is excluded otherwise. Both lists are part of the work item's contract, so
+adding or removing a participant makes the item stale. The work item depends on
+the upstream work of every included participant. One failed upstream item
+therefore holds it, as for any other dependency. Purging a participant's
+upstream work invalidates the project item too.
+
+`--participant` never selects a project-scope work item, in `nro run`,
+`status`, `purge`, `gc`, `freshen`, or `log`. `nro status` lists such items
+after the project's participants, with `(project)` in the participant column,
+and its JSON output gives `scope`.
+
 A development branch writes study results below
 `DEVELOPMENT/BRANCH/STUDIES/RESULTS` instead of the shared results root. Each
 work item also writes a completion manifest,
 `STEM_analysis-NAME_PARAMETER-LABEL_manifest.json`, which lists its outputs and
-provenance sidecars. Here `STEM` is `sub-PARTICIPANT` or the run's stem.
+provenance sidecars. Here `STEM` is `sub-PARTICIPANT`, the run's stem, or
+`project-PROJECT` for a project-scope item.
 
 Scheduled analysis work items appear in `nro status`; `--study STUDY` or
 `--study STUDY/ANALYSIS` limits the report to them. Their ownership receipts are

@@ -57,6 +57,22 @@ SITE_SETTINGS = {
         path=True,
         maintenance=True,
     ),
+    "storage.study_code": _setting(
+        "study_code",
+        "str",
+        "installation",
+        "Study analysis repositories",
+        path=True,
+        maintenance=True,
+    ),
+    "storage.study_results": _setting(
+        "study_results",
+        "str",
+        "installation",
+        "Published study analysis results",
+        path=True,
+        maintenance=True,
+    ),
     "resources.images": _setting(
         "images", "str", "installation", "Container image directory", path=True, maintenance=True
     ),

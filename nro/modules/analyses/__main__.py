@@ -18,10 +18,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from nro.analysis.artifacts import Artifact, file_entities
+from nro.analysis.artifacts import Artifact, InputSet, file_entities
 from nro.analysis.execution import publish_output, runner_command
 from nro.analysis.manifest import InputSpec
-from nro.analysis.planning import provenance_path
+from nro.analysis.planning import PROVENANCE_SUFFIX, provenance_path
 from nro.analysis.resolve import (
     Resolution,
     _drop_sidecars,
@@ -61,16 +61,66 @@ def _physical_root(context, upstream: dict) -> Path:
     raise ValueError(f"No input binding for upstream work item {upstream['key']}")
 
 
-def resolve_inputs(specification: dict, context=None) -> dict[str, Resolution]:
-    """Choose each input's files from bound upstream outputs or source BIDS."""
+def _analysis_files(root: Path, upstream: dict) -> list[Path]:
+    """Return the published output slots that an upstream analysis work item lists."""
+    completion = root / Path(upstream["completion"]).name
+    if not completion.is_file():
+        return []
+    listed = json.loads(completion.read_text(encoding="utf-8")).get("public_outputs", [])
+    return [
+        root / name
+        for name in listed
+        if not name.endswith(PROVENANCE_SUFFIX) and (root / name).is_file()
+    ]
+
+
+def _candidates(
+    spec: InputSpec, entry: dict, *, context, project: str, participant: str, run_entities
+) -> list[Artifact]:
+    """Return one participant's candidate files from an input's bound upstream work items."""
+    candidates = []
+    for upstream in entry["upstream"]:
+        if upstream.get("participant", participant) != participant:
+            continue
+        root = _physical_root(context, upstream)
+        recorded = {str(key): str(value) for key, value in upstream["entities"].items()}
+        if entry.get("analysis"):
+            paths = _analysis_files(root, upstream)
+            module = None
+            lineage = entry["analysis"]
+        else:
+            item = {"output_root": str(root), "output_prefix": upstream["prefix"]}
+            paths = _drop_sidecars(_upstream_files(item), spec.select)
+            module = spec.module
+            lineage = entry.get("workflow")
+        for path in paths:
+            found = {**recorded, **file_entities(path)}
+            if matches_filter(found, spec.select) and _matches_run(found, run_entities):
+                candidates.append(
+                    Artifact(
+                        path=path,
+                        entities=found,
+                        module=module,
+                        signature=_signature({"work_item": upstream["key"], "file": path.name}),
+                        project=project,
+                        participant=participant,
+                        lineage=lineage,
+                    )
+                )
+    return candidates
+
+
+def _resolve_participant(
+    specification: dict, participant: str, context, *, missing: str = "error"
+) -> dict[str, Resolution]:
     entities = specification["entities"]
-    project, participant = entities["project"], entities["participant"]
+    project = entities["project"]
     run_entities = specification["run_entities"] or None
     where = f"sub-{participant} in project {project}"
     result = {}
     for name, entry in specification["inputs"].items():
         spec = _spec(name, entry)
-        if spec.module is None:
+        if spec.module is None and not entry.get("analysis"):
             bids = context.paths.bids if context is not None else Path(os.environ["NRO_BIDS"])
             candidates = _raw_candidates(
                 spec,
@@ -80,29 +130,58 @@ def resolve_inputs(specification: dict, context=None) -> dict[str, Resolution]:
                 bids_root=bids,
             )
         else:
-            candidates = []
-            for upstream in entry["upstream"]:
-                root = _physical_root(context, upstream)
-                recorded = {str(key): str(value) for key, value in upstream["entities"].items()}
-                item = {"output_root": str(root), "output_prefix": upstream["prefix"]}
-                for path in _drop_sidecars(_upstream_files(item), spec.select):
-                    found = {**recorded, **file_entities(path)}
-                    if matches_filter(found, spec.select) and _matches_run(found, run_entities):
-                        candidates.append(
-                            Artifact(
-                                path=path,
-                                entities=found,
-                                module=spec.module,
-                                signature=_signature(
-                                    {"work_item": upstream["key"], "file": path.name}
-                                ),
-                                project=project,
-                                participant=participant,
-                                lineage=entry.get("workflow"),
-                            )
-                        )
-        result[name] = choose(spec, candidates, where=where)
+            candidates = _candidates(
+                spec,
+                entry,
+                context=context,
+                project=project,
+                participant=participant,
+                run_entities=run_entities,
+            )
+        result[name] = choose(spec, candidates, where=where, missing=missing)
     return result
+
+
+def resolve_inputs(specification: dict, context=None) -> dict[str, Resolution]:
+    """Choose each input's files from bound upstream outputs or source BIDS.
+
+    For a project-scope specification, each planned participant is resolved
+    separately. A participant whose inputs do not all resolve is excluded, and
+    the included and excluded participants are written into the parameters.
+    """
+    if specification.get("scope") != "project":
+        return _resolve_participant(
+            specification, specification["entities"]["participant"], context
+        )
+    included: list[str] = []
+    excluded = list(specification.get("excluded_participants", ()))
+    combined: dict[str, list[Artifact]] = {name: [] for name in specification["inputs"]}
+    for participant in specification["participants"]:
+        resolutions = _resolve_participant(
+            specification, participant, context, missing="not_applicable"
+        )
+        if any(value.status != "ok" for value in resolutions.values()):
+            excluded.append(participant)
+            continue
+        included.append(participant)
+        for name, resolution in resolutions.items():
+            value = resolution.value
+            if value is not None:
+                combined[name].extend(value.artifacts if isinstance(value, InputSet) else [value])
+    specification["parameters"] = {
+        **specification["parameters"],
+        "participants": included,
+        "excluded_participants": sorted(excluded),
+    }
+    if not included:
+        return {
+            name: Resolution(name, "error", message="no planned participant has every input")
+            for name in specification["inputs"]
+        }
+    return {
+        name: Resolution(name, "ok", InputSet(tuple(artifacts)))
+        for name, artifacts in combined.items()
+    }
 
 
 def _code_root(specification: dict) -> Path:

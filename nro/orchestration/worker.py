@@ -22,7 +22,7 @@ import yaml
 from nro.engine.references import resolve_public_payload
 from nro.orchestration.attempt_files import AttemptFiles, record_step
 from nro.orchestration.completion import record_completion
-from nro.orchestration.contracts import ExecutionEnvelope
+from nro.orchestration.contracts import ExecutionEnvelope, subject_label
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.dependency_state import AttemptInvalidated
 from nro.orchestration.execution import (
@@ -1216,7 +1216,7 @@ class Worker:
                 )
                 self._log(
                     f"claimed {assignment} {work_item.work_item_id} (module={work_item.module}; "
-                    f"participant=sub-{work_item.participant}; attempt={attempt_id}); "
+                    f"participant={subject_label(work_item.participant)}; attempt={attempt_id}); "
                     f"work-item log: {work_item.log_path}"
                 )
                 started_at = time.monotonic()

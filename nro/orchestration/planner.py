@@ -333,6 +333,17 @@ class Planner:
             if identity in seen:
                 continue
             seen.add(identity)
+            if not target.participant:
+                # Per-participant replanning cannot rebuild a project-scope item.
+                unavailable.append(
+                    UnavailableSelection(
+                        project=target.project,
+                        participant="",
+                        module=target.module,
+                        reason="project-scope work is replanned with its own request",
+                    )
+                )
+                continue
             workflow = workflows[target.workflow_id]
             registered = registered_workflows[target.workflow_id]
             entities = dict(target.entities)

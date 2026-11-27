@@ -16,7 +16,7 @@ from nro.analysis.planning import _placeholders, _scope_units
 from nro.definitions.store import fingerprint
 from nro.engine.bids import matches_filter
 from nro.engine.paths import study_work_root
-from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.contracts import PROJECT_SCOPE, WorkItemSpec
 from nro.orchestration.planning_context import work_item_key
 
 MODULE = "analyses"
@@ -122,6 +122,248 @@ def analysis_contract(analysis: LoadedAnalysis, unit: _Unit, inputs: dict) -> di
     }
 
 
+_CONTRACT_INPUT_KEYS = (
+    "module",
+    "analysis",
+    "workflow",
+    "select",
+    "many",
+    "min",
+    "max",
+    "optional",
+    "path",
+)
+
+
+def _contract_inputs(inputs: Mapping[str, dict]) -> dict[str, dict]:
+    """Return the declared form of each input, without the planned upstream items."""
+    return {
+        name: {key: entry[key] for key in _CONTRACT_INPUT_KEYS if key in entry}
+        for name, entry in inputs.items()
+    }
+
+
+def _input_entry(
+    spec: InputSpec,
+    parameters: Mapping[str, Any],
+    *,
+    project: str,
+    participant: str,
+    run_entities: Mapping[str, str],
+    by_selection: Mapping[tuple[str, str], UpstreamRequest],
+    analysis_specs: Mapping[str, Sequence[WorkItemSpec]],
+) -> tuple[dict, list[str], str | None]:
+    """Plan one input for one participant.
+
+    Returns the specification entry, the upstream work-item keys it depends on,
+    and a reason when no upstream work item can supply it.
+    """
+    entry: dict[str, Any] = {
+        "module": spec.module,
+        "select": dict(spec.select),
+        "many": spec.many,
+        "min": spec.minimum,
+        "max": spec.maximum,
+        "optional": spec.optional,
+        "path": spec.path,
+        "upstream": [],
+    }
+    if spec.module is not None:
+        workflow = (spec.workflow or "").format(**parameters)
+        candidates = by_selection[(spec.module, workflow)].work_items.values()
+        entry["workflow"] = workflow
+        source = f"workflow {workflow} plans no {spec.module} work"
+    elif spec.analysis is not None:
+        candidates = analysis_specs[spec.analysis]
+        entry["analysis"] = spec.analysis
+        source = f"analysis {spec.analysis} plans no work"
+    else:
+        return entry, [], None
+    matches = [
+        item
+        for item in candidates
+        if (spec.module is None or item.module == spec.module)
+        and item.project == project
+        and item.participant == participant
+        and _matches_unit(item, spec.select, run_entities)
+    ]
+    entry["upstream"] = [
+        {
+            "key": item.key,
+            "root": str(item.output_root),
+            "prefix": item.output_prefix,
+            "entities": dict(item.entities),
+            "participant": item.participant,
+            **({"completion": str(item.expected_outputs[0])} if spec.analysis is not None else {}),
+        }
+        for item in matches
+    ]
+    problem = None if matches else f"input {spec.name}: {source} for sub-{participant}"
+    return entry, [item.key for item in matches], problem
+
+
+def _work_item(
+    analysis: LoadedAnalysis,
+    *,
+    lineage,
+    project: str,
+    participant: str,
+    entities: Mapping[str, str],
+    contract: dict,
+    specification: Path,
+    dependencies: Sequence[str],
+    output_root: Path,
+    completion: Path,
+    memory_gb: int,
+    max_memory_gb: int,
+) -> WorkItemSpec:
+    manifest = analysis.manifest
+    scope = PROJECT_SCOPE if manifest.scope == "project" else manifest.scope
+    return WorkItemSpec.create(
+        key=work_item_key(project, MODULE, lineage.lineage_fingerprint, participant, entities),
+        module=MODULE,
+        project=project,
+        participant=participant,
+        entities=dict(entities),
+        scope=scope,
+        module_lineage_id=lineage.id,
+        config_fingerprint=fingerprint(contract),
+        directory_label=lineage.directory_label,
+        runtime_config=specification,
+        command=(
+            sys.executable,
+            "-m",
+            "nro.modules.analyses",
+            "--specification",
+            str(specification),
+        ),
+        dependencies=tuple(dict.fromkeys(dependencies)),
+        input_paths=(),
+        output_root=output_root,
+        output_prefix=None,
+        resource_class=manifest.resource_class,
+        output_format="Study-analysis output slots and a completion manifest",
+        memory_gb=manifest.memory_gb or memory_gb,
+        max_memory_gb=max(max_memory_gb, manifest.memory_gb or 0),
+        expected_outputs=(completion,),
+        processing={"analysis": contract},
+    )
+
+
+def _plan_project_item(
+    analysis: LoadedAnalysis,
+    project: str,
+    parameters: dict,
+    labels: dict,
+    *,
+    lineage,
+    snapshot: Path,
+    by_selection,
+    analysis_specs,
+    bids_root: Path,
+    memory_gb: int,
+    max_memory_gb: int,
+) -> WorkItemSpec | str:
+    """Plan one project-scope work item, or return why none can be planned.
+
+    The selector is expanded against the project's BIDS participants. A
+    selected participant is included when every required input has planned
+    upstream work, and excluded otherwise. Both lists enter the contract, so
+    changing either one makes the work item stale. The item depends on the
+    upstream work of every included participant.
+    """
+    from nro.analysis.planning import selected_participants
+
+    manifest = analysis.manifest
+    selected = selected_participants(analysis, project, bids_root)
+    inputs: dict[str, dict] = {}
+    dependencies: list[str] = []
+    included: list[str] = []
+    excluded: list[str] = []
+    for participant in selected:
+        entries = {}
+        found: list[str] = []
+        usable = True
+        for name, spec in manifest.inputs.items():
+            entry, keys, problem = _input_entry(
+                spec,
+                parameters,
+                project=project,
+                participant=participant,
+                run_entities={},
+                by_selection=by_selection,
+                analysis_specs=analysis_specs,
+            )
+            if problem is not None and not spec.optional:
+                usable = False
+                break
+            entries[name] = entry
+            found.extend(keys)
+        if not usable:
+            excluded.append(participant)
+            continue
+        included.append(participant)
+        dependencies.extend(found)
+        for name, entry in entries.items():
+            if name in inputs:
+                inputs[name]["upstream"].extend(entry["upstream"])
+            else:
+                inputs[name] = entry
+    if not included:
+        return f"none of {len(selected)} selected participants has planned upstream work"
+    unit = _Unit(analysis, project, None, {}, parameters, labels)
+    values = _placeholders(unit)
+    output_root = analysis.results_root / f"project-{project}"
+    outputs = {
+        slot: output_root / pattern.format(**values) for slot, pattern in manifest.outputs.items()
+    }
+    label = "".join(f"_{key}-{value}" for key, value in sorted(labels.items()))
+    completion = (
+        output_root / f"project-{project}_analysis-{bids_label(manifest.analysis)}{label}"
+        "_manifest.json"
+    )
+    contract = {
+        **analysis_contract(analysis, unit, _contract_inputs(inputs)),
+        "participants": list(included),
+        "excluded_participants": list(excluded),
+    }
+    specification = _write_specification(
+        analysis,
+        {
+            "version": SPECIFICATION_VERSION,
+            "analysis": analysis.name,
+            "scope": "project",
+            "commit": analysis.source.commit,
+            "code_root": str(snapshot),
+            "entry": manifest.entry,
+            "container": analysis.container,
+            "parameters": parameters,
+            "participants": list(included),
+            "excluded_participants": list(excluded),
+            "entities": {"project": project},
+            "run_entities": {},
+            "inputs": inputs,
+            "outputs": {slot: str(path) for slot, path in outputs.items()},
+            "completion": str(completion),
+            "contract": contract,
+        },
+    )
+    return _work_item(
+        analysis,
+        lineage=lineage,
+        project=project,
+        participant="",
+        entities=dict(labels),
+        contract=contract,
+        specification=specification,
+        dependencies=dependencies,
+        output_root=output_root,
+        completion=completion,
+        memory_gb=memory_gb,
+        max_memory_gb=max_memory_gb,
+    )
+
+
 def plan_work_items(
     analysis: LoadedAnalysis,
     *,
@@ -132,8 +374,13 @@ def plan_work_items(
     participants: Sequence[str] | None = None,
     memory_gb: int = 32,
     max_memory_gb: int = 256,
+    analysis_specs: Mapping[str, Sequence[WorkItemSpec]] | None = None,
 ) -> tuple[tuple[WorkItemSpec, ...], tuple[tuple[str, str, str], ...]]:
-    """Plan one work item per participant or run and expanded parameter combination.
+    """Plan one work item per participant, run, or project and parameter combination.
+
+    ``analysis_specs`` maps each analysis named by an ``analysis:`` input to the
+    work items already planned for it. A project-scope analysis cannot be
+    narrowed with ``participants``; its selector decides who it reads.
 
     ``lineage`` is the analysis's unbound lineage. Each module input depends on
     every upstream work item of its workflow whose recorded entities agree with
@@ -143,6 +390,12 @@ def plan_work_items(
     """
     if source_is_worktree(analysis):
         raise ValueError("Scheduled analyses run from a commit, not the working tree")
+    if analysis.manifest.scope == "project" and participants:
+        raise ValueError(
+            f"{analysis.name} has project scope; its participants come from the manifest's "
+            "participants selector, so --participant cannot narrow it"
+        )
+    analysis_specs = analysis_specs or {}
     snapshot = analysis.source.snapshot()
     manifest = analysis.manifest
     members = tuple(
@@ -152,6 +405,26 @@ def plan_work_items(
     results: list[WorkItemSpec] = []
     unavailable: list[tuple[str, str, str]] = []
     for project in members:
+        if manifest.scope == "project":
+            for parameters, labels in manifest.combinations():
+                spec = _plan_project_item(
+                    analysis,
+                    project,
+                    parameters,
+                    labels,
+                    lineage=lineage,
+                    snapshot=snapshot,
+                    by_selection=by_selection,
+                    analysis_specs=analysis_specs,
+                    bids_root=bids_root,
+                    memory_gb=memory_gb,
+                    max_memory_gb=max_memory_gb,
+                )
+                if isinstance(spec, str):
+                    unavailable.append((project, "", spec))
+                else:
+                    results.append(spec)
+            continue
         for participant, unit_entities in _scope_units(analysis, project, participants, bids_root):
             run_entities = {
                 key: value for key, value in unit_entities.items() if key not in {"stem", "session"}
@@ -176,60 +449,21 @@ def plan_work_items(
                 )
                 dependencies: list[str] = []
                 inputs: dict[str, dict] = {}
-                contract_inputs: dict[str, dict] = {}
                 missing = None
                 for name, spec in manifest.inputs.items():
-                    entry = {
-                        "module": spec.module,
-                        "select": dict(spec.select),
-                        "many": spec.many,
-                        "min": spec.minimum,
-                        "max": spec.maximum,
-                        "optional": spec.optional,
-                        "path": spec.path,
-                        "upstream": [],
-                    }
-                    if spec.module is not None:
-                        workflow = (spec.workflow or "").format(**parameters)
-                        graph = by_selection[(spec.module, workflow)].work_items
-                        matches = [
-                            item
-                            for item in graph.values()
-                            if item.module == spec.module
-                            and item.project == project
-                            and item.participant == participant
-                            and _matches_unit(item, spec.select, run_entities)
-                        ]
-                        entry["workflow"] = workflow
-                        entry["upstream"] = [
-                            {
-                                "key": item.key,
-                                "root": str(item.output_root),
-                                "prefix": item.output_prefix,
-                                "entities": dict(item.entities),
-                            }
-                            for item in matches
-                        ]
-                        dependencies.extend(item.key for item in matches)
-                        if not matches and not spec.optional:
-                            missing = (
-                                f"input {name}: workflow {workflow} plans no {spec.module} work"
-                            )
+                    entry, found, problem = _input_entry(
+                        spec,
+                        parameters,
+                        project=project,
+                        participant=participant,
+                        run_entities=run_entities,
+                        by_selection=by_selection,
+                        analysis_specs=analysis_specs,
+                    )
                     inputs[name] = entry
-                    contract_inputs[name] = {
-                        key: entry[key]
-                        for key in (
-                            "module",
-                            "workflow",
-                            "select",
-                            "many",
-                            "min",
-                            "max",
-                            "optional",
-                            "path",
-                        )
-                        if key in entry
-                    }
+                    dependencies.extend(found)
+                    if problem is not None and not spec.optional:
+                        missing = problem
                 if missing is not None:
                     unavailable.append((project, participant, missing))
                     continue
@@ -238,7 +472,7 @@ def plan_work_items(
                     if key in entities:
                         raise ValueError(f"Expanded parameter {key} collides with a run entity")
                     entities[key] = value
-                contract = analysis_contract(analysis, unit, contract_inputs)
+                contract = analysis_contract(analysis, unit, _contract_inputs(inputs))
                 specification = _write_specification(
                     analysis,
                     {
@@ -261,38 +495,20 @@ def plan_work_items(
                         "contract": contract,
                     },
                 )
-                lineage_fingerprint = lineage.lineage_fingerprint
                 results.append(
-                    WorkItemSpec.create(
-                        key=work_item_key(
-                            project, MODULE, lineage_fingerprint, participant, entities
-                        ),
-                        module=MODULE,
+                    _work_item(
+                        analysis,
+                        lineage=lineage,
                         project=project,
                         participant=participant,
                         entities=entities,
-                        scope=manifest.scope,
-                        module_lineage_id=lineage.id,
-                        config_fingerprint=fingerprint(contract),
-                        directory_label=lineage.directory_label,
-                        runtime_config=specification,
-                        command=(
-                            sys.executable,
-                            "-m",
-                            "nro.modules.analyses",
-                            "--specification",
-                            str(specification),
-                        ),
-                        dependencies=tuple(dict.fromkeys(dependencies)),
-                        input_paths=(),
+                        contract=contract,
+                        specification=specification,
+                        dependencies=dependencies,
                         output_root=output_root,
-                        output_prefix=None,
-                        resource_class=manifest.resource_class,
-                        output_format="Study-analysis output slots and a completion manifest",
-                        memory_gb=manifest.memory_gb or memory_gb,
-                        max_memory_gb=max(max_memory_gb, manifest.memory_gb or 0),
-                        expected_outputs=(completion,),
-                        processing={"analysis": contract},
+                        completion=completion,
+                        memory_gb=memory_gb,
+                        max_memory_gb=max_memory_gb,
                     )
                 )
     keys = [spec.key for spec in results]

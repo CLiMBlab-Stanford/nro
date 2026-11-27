@@ -14,8 +14,12 @@
     }
   </script>
   <script type="module" src="/static/viz.js"></script>
+  <script type="module" src="/static/tabs.js"></script>
 </head>
 <body>
+  <nav id="tabs" hidden></nav>
+  <div id="frames" hidden></div>
+  <div id="viewer">
   <aside id="panel">
     <header>
       <h1>nro viz</h1>
@@ -112,6 +116,7 @@
     <button id="expand" type="button" title="Show panel" hidden>›</button>
     <div id="status" role="status"></div>
   </main>
+  </div>
 
   <template id="layer-template">
     <article class="layer">
