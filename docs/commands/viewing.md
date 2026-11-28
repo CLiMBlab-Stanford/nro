@@ -161,11 +161,22 @@ only through the SSH tunnel.
 The server reads each branch's registry the first time it is used. The page's
 **Refresh data** button rereads the selected branch, so derivatives that
 finished later appear without a restart. **Restart server** replaces the server
-process inside the same job, so it loads the checkout's current code.
-`scancel --batch --signal=USR1 JOB_ID` does the same. The restarted server
-keeps its port and token, so tunnels and open pages keep working, but it must
-read time series again. Changes to the page's own HTML, CSS, and JavaScript
-need only a browser reload.
+process inside the same job with one that the `nro` launcher starts, so it runs
+the release the checkout has installed now. `scancel --batch --signal=USR1
+JOB_ID` does the same. The restarted server keeps its job, port, and token, so
+tunnels keep working. Reload open pages; the server must also read time series
+again.
+
+Each server records the release it runs. When `nro viz` finds your server on an
+older release than the one installed, it restarts the server in place before
+printing the address. `nro viz --restart` does only that and starts no server
+when none is running. `./install` runs it for the installing user after it
+activates a new release and before it removes the old one. Other users'
+servers are not restarted; theirs restart the next time they run `nro viz`.
+
+A server started by a release before 0.50.3 restarts on its own release, which
+the upgrade removes, so `nro viz` replaces it with a new job instead. The new
+job can run on another node, so use the tunnel command it prints.
 
 Analyses that declare a [viewer page](studies.md#viewer-pages) appear as
 tabs above the viewer once they have published outputs. Reload the page to

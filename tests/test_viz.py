@@ -14,6 +14,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+import nro.bin.viz as viz
 from nro.viz import data, service
 from nro.viz.catalog import Catalog, Catalogs, build_layers, cifti_summary
 from nro.viz.server import make_server
@@ -434,6 +435,7 @@ def test_viz_reuses_a_running_server_without_submitting(
         service, "active_server", lambda root, token: {"host": "node1", "port": 23456}
     )
     monkeypatch.setattr(service, "submit", lambda *args: pytest.fail("must not submit"))
+    monkeypatch.setattr(service, "is_current", lambda active: True)
     monkeypatch.setattr(viz.getpass, "getuser", lambda: "user")
 
     viz.main(["--tunnel-host", "login"])
@@ -464,20 +466,88 @@ def test_viz_returns_after_queueing_with_no_wait(tmp_path: Path, monkeypatch, ca
     assert "Run `nro viz` again" in captured.out
 
 
-def test_restart_command_reuses_port_and_state(tmp_path: Path) -> None:
-    command = service.restart_argv(tmp_path, 4321, 32)
-
-    assert command[1:] == [
-        "-m",
-        "nro.viz.service",
-        "--serve",
+def test_serve_command_starts_through_the_launcher_when_installed(tmp_path, monkeypatch) -> None:
+    launcher = tmp_path / "nro"
+    launcher.write_text("#!/usr/bin/env python3\n# nro directory-aware launcher\n")
+    launcher.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    command = service.serve_command(tmp_path / "state", port=4321, memory_gb=32)
+    assert command == [
+        str(launcher),
+        "viz",
+        "--serve-internal",
         "--state-dir",
-        str(tmp_path),
-        "--port",
-        "4321",
+        str(tmp_path / "state"),
         "--memory-gb",
         "32",
+        "--port",
+        "4321",
     ]
+    # Another program named nro is not the launcher.
+    launcher.write_text("#!/bin/sh\necho other\n")
+    command = service.serve_command(tmp_path / "state", port=None, memory_gb=8, record=False)
+    assert command[1:4] == ["-m", "nro.viz.service", "--serve"]
+    assert command[-1] == "--unrecorded"
+
+
+def test_viz_serve_internal_runs_the_server(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(service, "main", lambda argv: calls.append(argv))
+    viz.main(["--serve-internal", "--state-dir", "/state", "--port", "1"])
+    assert calls == [["--serve", "--state-dir", "/state", "--port", "1"]]
+
+
+def _record(application: str | None, started: float = 1.0) -> dict:
+    record = {"host": "h", "port": 1, "pid": 2, "job_id": "3", "started_at": started}
+    if application is not None:
+        record["application"] = application
+    return record
+
+
+@pytest.mark.parametrize(
+    ("record", "accepted", "after", "expected"),
+    [
+        (_record("/new"), None, None, "current"),
+        (_record("/old"), True, _record("/new", 2.0), "restarted"),
+        (_record("/old"), False, None, "replaced"),
+        # A server from before 0.50.3 restarts on its own release, so it is replaced.
+        (_record(None), None, None, "replaced"),
+    ],
+)
+def test_refresh_moves_a_server_to_the_installed_release(
+    tmp_path, monkeypatch, record, accepted, after, expected
+) -> None:
+    calls = []
+    states = iter([record, after])
+    monkeypatch.setattr(service, "installed_application", lambda: "/new")
+    monkeypatch.setattr(service, "active_server", lambda root, token, timeout=5.0: next(states))
+    monkeypatch.setattr(
+        service, "request_restart", lambda active, token: calls.append("restart") or accepted
+    )
+    monkeypatch.setattr(service, "wait_until_current", lambda root, token, previous: after)
+    monkeypatch.setattr(service, "stop", lambda root: calls.append("stop") or ["3"])
+    monkeypatch.setattr(service, "submit", lambda root, values: calls.append("submit") or "9")
+    outcome, result = service.refresh(tmp_path, "t", {})
+    assert outcome == expected
+    if expected == "replaced":
+        assert result == "9" and calls[-2:] == ["stop", "submit"]
+        assert ("restart" in calls) == ("application" in record)
+    elif expected == "restarted":
+        assert result == after and calls == ["restart"]
+    else:
+        assert calls == []
+
+
+def test_viz_restart_option_starts_no_server(tmp_path, monkeypatch, capsys) -> None:
+    from nro.site import configuration
+
+    monkeypatch.setattr(viz, "_state", lambda: tmp_path)
+    monkeypatch.setattr(service, "access_token", lambda root: "t")
+    monkeypatch.setattr(service, "active_server", lambda root, token: None)
+    monkeypatch.setattr(service, "submit", lambda root, values: pytest.fail("submitted"))
+    monkeypatch.setattr(configuration, "settings", lambda: ({},))
+    viz.main(["--restart"])
+    assert "No viewer server is running" in capsys.readouterr().out
 
 
 def test_open_file_pairs_hemispheres_and_stays_inside_project(tmp_path: Path) -> None:
@@ -556,3 +626,24 @@ def test_catalog_splits_contrast_statmaps_into_selectable_facets(tmp_path: Path)
             "stat": "t",
         },
     ]
+
+
+def test_viz_restarts_a_stale_server_before_printing_its_address(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from nro.site import configuration
+
+    monkeypatch.setattr(viz, "_state", lambda: tmp_path)
+    monkeypatch.setattr(service, "access_token", lambda root: "t")
+    monkeypatch.setattr(service, "active_server", lambda root, token: _record("/old"))
+    monkeypatch.setattr(service, "is_current", lambda active: False)
+    monkeypatch.setattr(
+        service, "refresh", lambda root, token, values: ("restarted", _record("/new", 2.0))
+    )
+    monkeypatch.setattr(service, "submit", lambda *args: pytest.fail("must not submit"))
+    monkeypatch.setattr(configuration, "settings", lambda: ({},))
+    monkeypatch.setattr(viz.getpass, "getuser", lambda: "user")
+    viz.main(["--restart", "--tunnel-host", "login"])
+    captured = capsys.readouterr()
+    assert "restarting it" in captured.err
+    assert "ssh -N -L 1:h:1 user@login" in captured.out

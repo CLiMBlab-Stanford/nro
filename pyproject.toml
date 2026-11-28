@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nro"
-version = "0.50.2"
+version = "0.50.3"
 description = "BIDS fMRI derivative processing and orchestration"
 requires-python = ">=3.12"
 dependencies = [
@@ -96,6 +96,7 @@ testpaths = ["tests"]
 addopts = ["-m", "not integration"]
 markers = [
     "integration: exercises process, Git, or filesystem boundaries across subsystems",
+    "viewer_refresh: lets an installation test run the real viewer restart hook",
 ]
 
 [tool.ruff]

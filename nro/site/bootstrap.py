@@ -948,6 +948,7 @@ def _main(argv=None) -> None:
 
             publish(ROOT, shared_registry, installation=record)
             record = json.loads(record_path.read_text())
+            refresh_viewer(python, application, site, env)
             installation_layers.prune_environments(
                 ROOT,
                 Path(record["environment"]),
@@ -961,6 +962,30 @@ def _main(argv=None) -> None:
             set_default=args.set_default,
             replace_launcher=args.replace_launcher,
         )
+
+
+def refresh_viewer(python: str, application, site: Path, env: dict) -> None:
+    """Move the installing user's running viewer server to the new release.
+
+    This runs after the new installation is published and before old layers
+    are pruned. ``nro viz --restart`` restarts a server in place, or replaces
+    one from before 0.50.3 with a new job; it starts nothing when no server is
+    running. Other users' servers are left alone. A failure is reported and
+    does not fail the installation.
+    """
+    module_command = [python, "-m", "nro.bin.viz", "--restart", "--no-wait"]
+    command = (
+        list(application.command(module_command, site=site))
+        if application is not None
+        else [python, "-I", "-B", *module_command[1:]]
+    )
+    try:
+        completed = subprocess.run(command, cwd=ROOT, env=env, check=False, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"Could not restart your viewer server: {error}; run `nro viz`.", file=sys.stderr)
+        return
+    if completed.returncode != 0:
+        print("Could not restart your viewer server; run `nro viz`.", file=sys.stderr)
 
 
 def cancel_setup() -> None:
