@@ -248,6 +248,10 @@ export class SurfaceView {
     this.controls.target.copy(center);
     this.camera.position.set(center.x - 1500, center.y, center.z);
     this.camera.up.set(0, 0, 1);
+    // OrbitControls aims the camera at its target only in update(); without
+    // it the camera keeps facing -z and shows nothing.
+    this.camera.lookAt(center);
+    this.controls.update();
     this.resize();
   }
 

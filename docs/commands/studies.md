@@ -178,11 +178,11 @@ participants:
   exclude: ["044"]
   pending: wait           # or exclude
 inputs:
-  maps:
-    from: analysis:project_networks
-    select: {suffix: networks, extension: .npy}
+  summaries:
+    from: analysis:subject_summary
+    select: {suffix: summary, extension: .tsv}
 outputs:
-  pca: "project-{project}_desc-networkPCA_stat.npz"
+  table: "project-{project}_desc-group_summary.tsv"
 ```
 
 `match` takes the same patterns as command-line [selectors](index.md#shared-selectors).
