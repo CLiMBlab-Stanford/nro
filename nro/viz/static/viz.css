@@ -29,12 +29,14 @@ body {
   margin: 0;
   height: 100vh;
   display: flex;
-  flex-direction: column;
   color: var(--text);
   background: var(--canvas);
   overflow: hidden;
 }
 
+/* The nro viz page stacks its tab bar above the views. Analysis viewer pages
+   reuse this stylesheet with a panel beside the canvas, as body's default. */
+body.host { flex-direction: column; }
 #viewer { flex: 1; display: flex; min-height: 0; }
 #frames { flex: 1; display: flex; min-height: 0; }
 #frames iframe { flex: 1; border: none; width: 100%; height: 100%; }
