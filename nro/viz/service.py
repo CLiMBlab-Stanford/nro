@@ -35,6 +35,9 @@ PORT_RANGE = 40000
 PORT_ATTEMPTS = 50
 CACHE_FRACTION = 0.6
 ACTIVE_FIELDS = {"host", "port", "pid", "job_id", "started_at"}
+"""Fields every server record has. Servers from 0.50.3 also record ``application``."""
+LAUNCHER_MARKER = "# nro directory-aware launcher"
+RESTART_TIMEOUT_SECONDS = 90
 QUEUED_STATES = {"PENDING", "CONFIGURING", "RUNNING", "COMPLETING", "REQUEUED", "RESIZING"}
 
 
@@ -99,7 +102,7 @@ def _read(path: Path) -> dict | None:
 def active_server(root: Path, token: str, *, timeout: float = 5.0) -> dict | None:
     """Return the running server's record when it answers an authorized ping."""
     active = _read(root / "active.json")
-    if active is None or set(active) != ACTIVE_FIELDS:
+    if active is None or not ACTIVE_FIELDS <= set(active):
         return None
     request = urllib.request.Request(
         f"http://{active['host']}:{active['port']}/api/ping",
@@ -139,6 +142,117 @@ def queued_job(root: Path) -> str | None:
     return None
 
 
+def running_application() -> str:
+    """Return the source tree this process imported nro from."""
+    import nro
+
+    return str(Path(nro.__file__).resolve().parent.parent)
+
+
+def installed_application() -> str:
+    """Return the source tree the checkout's current installation selects."""
+    from nro.site.configuration import CHECKOUT, installation_record
+
+    application = installation_record().get("application")
+    return str(Path(application).resolve() if application else Path(CHECKOUT).resolve())
+
+
+def is_current(active: dict) -> bool:
+    """Return whether a server record shows the installed release.
+
+    Servers started before 0.50.3 record no application and count as stale.
+    """
+    return active.get("application") == installed_application()
+
+
+def launcher() -> str | None:
+    """Return the user's directory-aware ``nro`` launcher, or None when absent."""
+    found = shutil.which("nro")
+    if found is None:
+        return None
+    try:
+        with open(found, encoding="utf-8") as stream:
+            head = [stream.readline() for _ in range(2)]
+    except (OSError, UnicodeDecodeError):
+        return None
+    return found if any(line.strip() == LAUNCHER_MARKER for line in head) else None
+
+
+def serve_command(
+    root: Path, *, port: int | None, memory_gb: int, record: bool = True
+) -> list[str]:
+    """Return the command that starts a server on the checkout's installed release.
+
+    The user's launcher resolves the installation when the command runs, so a
+    restart after an upgrade loads the new release even though the old one
+    has been removed. The command must run with the checkout as its working
+    directory. Without a launcher, the current interpreter serves instead.
+    """
+    arguments = ["--state-dir", str(root), "--memory-gb", str(memory_gb)]
+    if port is not None:
+        arguments += ["--port", str(port)]
+    if not record:
+        arguments.append("--unrecorded")
+    found = launcher()
+    if found is not None:
+        return [found, "viz", "--serve-internal", *arguments]
+    return [sys.executable, "-m", "nro.viz.service", "--serve", *arguments]
+
+
+def request_restart(active: dict, token: str, *, timeout: float = 10.0) -> bool:
+    """Ask a running server to restart itself; return whether it accepted."""
+    request = urllib.request.Request(
+        f"http://{active['host']}:{active['port']}/api/restart",
+        data=b"",
+        method="POST",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return bool(json.loads(response.read()).get("restarting"))
+    except (OSError, ValueError, urllib.error.URLError):
+        return False
+
+
+def wait_until_current(
+    root: Path, token: str, *, previous: dict, timeout: float = RESTART_TIMEOUT_SECONDS
+) -> dict | None:
+    """Wait for a restarted server to answer on the installed release."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        active = active_server(root, token, timeout=2.0)
+        if (
+            active is not None
+            and active.get("started_at") != previous.get("started_at")
+            and is_current(active)
+        ):
+            return active
+        time.sleep(1.0)
+    return None
+
+
+def refresh(root: Path, token: str, values: dict) -> tuple[str, dict | str | None]:
+    """Move a running server onto the installed release.
+
+    Returns ``("current", record)`` when nothing had to change,
+    ``("restarted", record)`` after an in-place restart, ``("replaced",
+    job_id)`` when the server had to be resubmitted, or ``("none", None)``
+    when no server is running. A server from before 0.50.3 restarts on its own
+    release, so it is replaced with a new job instead.
+    """
+    active = active_server(root, token)
+    if active is None:
+        return "none", None
+    if is_current(active):
+        return "current", active
+    if "application" in active and request_restart(active, token):
+        restarted = wait_until_current(root, token, previous=active)
+        if restarted is not None:
+            return "restarted", restarted
+    stop(root)
+    return "replaced", submit(root, values)
+
+
 def submit(root: Path, values: dict) -> str:
     """Submit the server as a batch job and return its job ID.
 
@@ -148,17 +262,10 @@ def submit(root: Path, values: dict) -> str:
     launcher = shutil.which("sbatch")
     if launcher is None:
         raise SystemExit("sbatch is unavailable; rerun with --serverless to serve from this host")
-    serve_command = shlex.join(
-        [
-            sys.executable,
-            "-m",
-            "nro.viz.service",
-            "--serve",
-            "--state-dir",
-            str(root),
-            "--memory-gb",
-            str(values["viewer_memory"]),
-        ]
+    from nro.site.configuration import CHECKOUT
+
+    command_line = shlex.join(
+        serve_command(root, port=None, memory_gb=int(values["viewer_memory"]))
     )
     command = [
         launcher,
@@ -169,7 +276,8 @@ def submit(root: Path, values: dict) -> str:
         f"--mem={values['viewer_memory']}G",
         f"--time={values['viewer_time']}:00:00",
         f"--output={root / 'server-%j.log'}",
-        f"--wrap=exec {serve_command}",
+        f"--chdir={CHECKOUT}",
+        f"--wrap=exec {command_line}",
     ]
     if values.get("viewing_partition"):
         command.append(f"--partition={values['viewing_partition']}")
@@ -280,6 +388,7 @@ def serve(root: Path, *, port: int | None = None, memory_gb: int = 32, record: b
         "pid": os.getpid(),
         "job_id": str(os.environ.get("SLURM_JOB_ID") or ""),
         "started_at": time.time(),
+        "application": running_application(),
     }
     if record:
         atomic_write_json(root / "active.json", active, mode=0o600)
@@ -291,30 +400,14 @@ def serve(root: Path, *, port: int | None = None, memory_gb: int = 32, record: b
     finally:
         server.server_close()
     if restarting.is_set():
+        from nro.site.configuration import CHECKOUT
+
         sys.stdout.flush()
-        command = restart_argv(root, bound, memory_gb, record=record)
+        command = serve_command(root, port=bound, memory_gb=memory_gb, record=record)
+        os.chdir(CHECKOUT)
         os.execv(command[0], command)
     if record and (_read(root / "active.json") or {}).get("pid") == os.getpid():
         (root / "active.json").unlink(missing_ok=True)
-
-
-def restart_argv(root: Path, port: int, memory_gb: int, *, record: bool = True) -> list[str]:
-    """Return the command that reruns a server on the same port."""
-    command = [
-        sys.executable,
-        "-m",
-        "nro.viz.service",
-        "--serve",
-        "--state-dir",
-        str(root),
-        "--port",
-        str(port),
-        "--memory-gb",
-        str(memory_gb),
-    ]
-    if not record:
-        command.append("--unrecorded")
-    return command
 
 
 def build_parser() -> argparse.ArgumentParser:

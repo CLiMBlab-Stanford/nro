@@ -32,6 +32,13 @@ from nro.site import (
 from nro.site.setup import edit_settings, save_settings
 
 
+@pytest.fixture(autouse=True)
+def _no_viewer_refresh(request, monkeypatch):
+    """Keep installation tests from restarting a real viewer server."""
+    if "viewer_refresh" not in request.keywords:
+        monkeypatch.setattr(bootstrap, "refresh_viewer", lambda *args, **kwargs: None)
+
+
 def test_locked_native_dependencies_have_python312_glibc217_wheels() -> None:
     lock = tomllib.loads((Path(__file__).parents[1] / "uv.lock").read_text())
     packages = {package["name"]: package for package in lock["package"]}
@@ -2630,3 +2637,19 @@ def test_default_personal_site_resolves_symlinked_home(tmp_path, monkeypatch, va
         expected = real.resolve() / "nro/site.toml"
 
     assert site.default_personal_site() == expected
+
+
+@pytest.mark.viewer_refresh
+def test_install_restarts_only_the_users_viewer_and_never_fails(monkeypatch, capsys):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", run)
+    bootstrap.refresh_viewer("/env/bin/python", None, Path("/site.toml"), {"A": "1"})
+    ((command, kwargs),) = calls
+    assert command == ["/env/bin/python", "-I", "-B", "-m", "nro.bin.viz", "--restart", "--no-wait"]
+    assert kwargs["cwd"] == bootstrap.ROOT and kwargs["check"] is False
+    assert "run `nro viz`" in capsys.readouterr().err

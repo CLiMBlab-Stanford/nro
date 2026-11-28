@@ -39,6 +39,14 @@ def build_parser(*, prog: str = "nro viz") -> argparse.ArgumentParser:
     )
     parser.add_argument("--stop", action="store_true", help="Cancel your viewer server")
     parser.add_argument(
+        "--restart",
+        action="store_true",
+        help=(
+            "Move your running server to the installed release and print how to reach it; "
+            "starts no server when none is running"
+        ),
+    )
+    parser.add_argument(
         "--serverless",
         action="store_true",
         help="Run a private server in this terminal on the current host until interrupted",
@@ -100,10 +108,15 @@ def _state() -> Path:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro viz") -> None:
-    """Find, start, or stop the current user's viewer server."""
+    """Find, start, restart, or stop the current user's viewer server."""
     from nro.viz import service
 
-    args = build_parser(prog=prog).parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["--serve-internal"]:
+        # The launcher starts and restarts the server through this entry point.
+        service.main(["--serve", *arguments[1:]])
+        return
+    args = build_parser(prog=prog).parse_args(arguments)
     if args.port is not None and not args.serverless:
         raise SystemExit("--port applies only to --serverless; your server uses a stable port")
     root = _state()
@@ -130,15 +143,46 @@ def main(argv: list[str] | None = None, *, prog: str = "nro viz") -> None:
         raise SystemExit(str(error)) from error
     with service.launch_lock(root):
         active = service.active_server(root, token)
-        if active is not None:
+        if active is None and args.restart:
+            print("No viewer server is running")
+            return
+        replaced = None
+        if active is not None and not service.is_current(active):
+            print(
+                "Your viewer server runs an older nro release; restarting it...",
+                file=sys.stderr,
+                flush=True,
+            )
+            outcome, result = service.refresh(root, token, values)
+            if outcome == "replaced":
+                replaced = str(result)
+                print(
+                    f"The old server could not restart in place; submitted viewer server job "
+                    f"{replaced}. Its node may differ, so use the new tunnel command.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                active = result
+        if active is not None and replaced is None:
             _announce(args, active, token)
             return
-        job_id = service.queued_job(root)
-        if job_id is None:
-            job_id = service.submit(root, values)
-            print(f"Submitted viewer server job {job_id}.", file=sys.stderr, flush=True)
+        if replaced is not None:
+            job_id = replaced
         else:
-            print(f"Viewer server job {job_id} is already queued.", file=sys.stderr, flush=True)
+            job_id = service.queued_job(root)
+            if job_id is None:
+                job_id = service.submit(root, values)
+                print(f"Submitted viewer server job {job_id}.", file=sys.stderr, flush=True)
+            else:
+                print(f"Viewer server job {job_id} is already queued.", file=sys.stderr, flush=True)
+    _wait(args, root, token, job_id)
+
+
+def _wait(args: argparse.Namespace, root: Path, token: str, job_id: str) -> None:
+    """Wait for a submitted server to start, then print how to reach it."""
+    from nro.viz import service
+
     if args.no_wait:
         print("Run `nro viz` again once it starts to print the tunnel command and URL.")
         return
